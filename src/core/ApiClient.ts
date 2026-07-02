@@ -16,7 +16,6 @@ export class ApiClient {
 
   constructor() {
     this.baseUrl = `${import.meta.env.VITE_BASE_URL}/api` || '/api';
-    console.log(this.baseUrl);
   }
 
   setToken(token: string | null) {
