@@ -5,6 +5,7 @@ import { invoiceService } from '../../services';
 import { Modal } from './Modal';
 import { StatusChip } from './Chip';
 import { PageLoader } from './PageLoader';
+import { ImageLightbox } from './ImageLightbox';
 import { formatMoney, projectName, statusLabel, assetUrl, invoiceManagerName } from '../../utils/format';
 
 export function InvoiceDetailModal({
@@ -17,12 +18,14 @@ export function InvoiceDetailModal({
   const { t, i18n } = useTranslation();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lang = i18n.language;
   const dateLocale = lang === 'ar' ? 'ar-SA' : 'en-SA';
 
   useEffect(() => {
     if (!invoiceId) {
       setInvoice(null);
+      setLightboxIndex(null);
       return;
     }
     setLoading(true);
@@ -38,6 +41,24 @@ export function InvoiceDetailModal({
     : invoice?.attachmentUrl
       ? [{ url: invoice.attachmentUrl, filename: t('pa.invoiceDetail'), mimeType: 'image/jpeg' }]
       : [];
+
+  const imageEntries = images.map((img, i) => ({
+    key: i,
+    src: assetUrl(img.url),
+    filename: img.filename,
+    alt: img.filename || `${t('pa.invoiceDetail')} ${i + 1}`,
+    isPdf: Boolean(img.mimeType?.includes('pdf')),
+  }));
+
+  const previewImages = imageEntries
+    .filter((entry) => !entry.isPdf)
+    .map(({ src, filename, alt }) => ({ url: src, filename, alt }));
+
+  const previewIndexByKey = new Map(
+    imageEntries
+      .filter((entry) => !entry.isPdf)
+      .map((entry, previewIndex) => [entry.key, previewIndex]),
+  );
 
   const lineItems = invoice?.lineItems ?? [];
 
@@ -116,24 +137,30 @@ export function InvoiceDetailModal({
                       {t('pa.invoiceImages', { count: images.length })}
                     </div>
                     <div className="grid grid-cols-1 gap-3">
-                      {images.map((img, i) => (
-                        <a
-                          key={i}
-                          href={assetUrl(img.url)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block rounded-xl border border-[#e3e9f2] overflow-hidden bg-[#f7f9fc] hover:border-brand-300 transition-colors"
+                      {imageEntries.map((entry) => (
+                        <button
+                          key={entry.key}
+                          type="button"
+                          onClick={() => {
+                            if (entry.isPdf) {
+                              window.open(entry.src, '_blank', 'noopener,noreferrer');
+                              return;
+                            }
+                            const previewIndex = previewIndexByKey.get(entry.key);
+                            if (previewIndex !== undefined) setLightboxIndex(previewIndex);
+                          }}
+                          className="block w-full text-start rounded-xl border border-[#e3e9f2] overflow-hidden bg-[#f7f9fc] hover:border-brand-300 transition-colors cursor-zoom-in"
                         >
-                          {img.mimeType?.includes('pdf') ? (
-                            <div className="p-8 text-center text-sm text-muted">📄 {img.filename || 'PDF'}</div>
+                          {entry.isPdf ? (
+                            <div className="p-8 text-center text-sm text-muted">📄 {entry.filename || 'PDF'}</div>
                           ) : (
                             <img
-                              src={assetUrl(img.url)}
-                              alt={img.filename || `${t('pa.invoiceDetail')} ${i + 1}`}
-                              className="w-full max-h-80 object-contain bg-white"
+                              src={entry.src}
+                              alt={entry.alt}
+                              className="w-full max-h-80 object-contain bg-white pointer-events-none"
                             />
                           )}
-                        </a>
+                        </button>
                       ))}
                     </div>
                   </>
@@ -182,6 +209,14 @@ export function InvoiceDetailModal({
             </div>
           </div>
         </div>
+      )}
+      {lightboxIndex !== null && previewImages.length > 0 && (
+        <ImageLightbox
+          images={previewImages}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onIndexChange={setLightboxIndex}
+        />
       )}
     </Modal>
   );

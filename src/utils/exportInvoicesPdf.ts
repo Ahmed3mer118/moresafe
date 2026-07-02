@@ -4,6 +4,7 @@ import { exportTablePdf, getExportColumns, type ExportCol } from './exportTable'
 import type { Column } from '../components/ui/DataTable';
 
 async function imageToDataUrl(url: string): Promise<string | null> {
+  if (url.startsWith('data:')) return url;
   try {
     const res = await fetch(url);
     if (!res.ok) return null;

@@ -49,13 +49,11 @@ export function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-gray-50 to-indigo-50/50 relative overflow-hidden">
-      {/* خلفية بأشكال هندسية بسيطة */}
       <div className="absolute inset-0 -z-10">
         <div className="absolute top-0 left-0 w-72 h-72 bg-indigo-300/20 rounded-full mix-blend-multiply filter blur-3xl animate-pulse" />
         <div className="absolute bottom-0 right-0 w-72 h-72 bg-purple-300/20 rounded-full mix-blend-multiply filter blur-3xl animate-pulse delay-1000" />
       </div>
 
-      {/* زر اللغة بتصميم بسيط */}
       <button
         type="button"
         onClick={() => setLanguage(lang === 'ar' ? 'en' : 'ar')}
@@ -71,14 +69,13 @@ export function LoginPage() {
       >
         <div className="bg-white rounded-2xl shadow-xl shadow-indigo-100/50 border border-gray-100/80 overflow-hidden">
 
-          {/* رأس البطاقة بشكل مختلف (شعار + عنوان) */}
           <div className="px-8 pt-8 pb-6 text-center border-b border-gray-100">
-            <div className="inline-flex items-center justify-center w-16 bg-brand-500 h-16 rounded-2xl mb-4">
+            <div className="inline-flex items-center justify-center w-[150px] max-h-[100px] bg-brand-500 rounded-2xl mb-4">
               <img src={logo} alt="Moresafe" className="w-full h-full object-cover" />
             </div>
-            <h1 className="text-2xl font-extrabold text-gray-800 tracking-tight">
+            {/* <h1 className="text-2xl font-extrabold text-gray-800 tracking-tight">
               {t('app.name')}
-            </h1>
+            </h1> */}
 
           </div>
 
