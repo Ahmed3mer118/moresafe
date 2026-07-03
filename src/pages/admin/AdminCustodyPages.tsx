@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { DataTable } from '../../components/ui/DataTable';
@@ -22,7 +23,7 @@ import { showToast } from '../../utils/toast';
 
 const ADMIN_BASE = '/dashboard/admin/disbursement';
 
-function BalanceIndicator({ custody, lang, t }: { custody: Custody; lang: string; t: (k: string, o?: object) => string }) {
+function BalanceIndicator({ custody, lang, t }: { custody: Custody; lang: string; t: TFunction }) {
   const { amount, spent, remaining, over } = custodyTotals(custody);
   if (over) {
     return (

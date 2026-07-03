@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { DataTable } from '../../components/ui/DataTable';
@@ -31,7 +32,7 @@ function ColoredAmount({
   return <span className={cls}>{formatMoney(value, lang)}</span>;
 }
 
-function BalanceBadge({ custody, lang, t }: { custody: Custody; lang: string; t: (k: string, o?: object) => string }) {
+function BalanceBadge({ custody, lang, t }: { custody: Custody; lang: string; t: TFunction }) {
   const { remaining, over } = custodyTotals(custody);
   if (over) {
     return <Chip variant="red">{t('admin.overBy', { amount: formatMoney(Math.abs(remaining), lang) })}</Chip>;

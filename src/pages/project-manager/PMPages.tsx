@@ -778,7 +778,7 @@ export function PMCustodyArchivePage() {
 
 export function PMCustodyArchiveDetailPage() {
   const { custodyId } = useParams<{ custodyId: string }>();
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [custody, setCustody] = useState<Custody | null>(null);
   const [loading, setLoading] = useState(true);

@@ -1,5 +1,4 @@
 import type { Custody, Invoice } from '../types';
-import { formatMoney } from './format';
 
 const PM_UPLOAD_CUSTODY_STATUSES = new Set(['open', 'closed', 'pm_rejected']);
 const PM_SUBMIT_CUSTODY_STATUSES = new Set(['open', 'closed']);
@@ -17,7 +16,6 @@ export function isInvoiceSubmittedForApproval(status: string) {
   return status !== 'accumulated' && status !== 'draft';
 }
 
-const APPROVED_INVOICE_STATUSES = new Set(['pm_approved', 'pending_finance', 'finance_approved', 'settled']);
 const FINANCE_ELIGIBLE_STATUSES = new Set(['pending_finance', 'finance_approved', 'settled']);
 const POST_PM_CUSTODY_STATUSES = new Set(['pm_approved', 'finance_pending', 'settled']);
 
