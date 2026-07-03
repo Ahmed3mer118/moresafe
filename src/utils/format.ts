@@ -24,6 +24,21 @@ export function userName(u: { name: string; nameEn?: string } | string | null | 
   return lang === 'en' && u.nameEn ? u.nameEn : u.name;
 }
 
+export function managersFromProjects(
+  projects: { _id?: string; id?: string; manager?: { _id?: string; id?: string; name: string; nameEn?: string } | string }[],
+  lang: string,
+  projectId?: string,
+) {
+  const map = new Map<string, { name: string; nameEn?: string; _id?: string; id?: string }>();
+  projects
+    .filter((p) => !projectId || entityId(p) === projectId)
+    .forEach((p) => {
+      const mgr = p.manager;
+      if (mgr && typeof mgr === 'object' && mgr.name) map.set(entityId(mgr), mgr);
+    });
+  return [...map.values()].sort((a, b) => userName(a, lang).localeCompare(userName(b, lang), lang === 'ar' ? 'ar' : 'en'));
+}
+
 export function invoiceManagerName(
   inv: { uploadedBy?: { name: string; nameEn?: string }; project?: { manager?: { name: string; nameEn?: string } } },
   lang: string,

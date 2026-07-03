@@ -1,6 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { TFunction } from 'i18next';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -18,64 +17,12 @@ import { useTableFilter } from '../../hooks/useTableFilter';
 import { useUi } from '../../context/UiContext';
 import { dashboardService, custodyService, invoiceService, projectService, userService } from '../../services';
 import type { Custody, Invoice, Project, User, Voucher } from '../../types';
-import { formatMoney, projectName, userName, statusLabel, invoiceManagerName, formatDate } from '../../utils/format';
+import { formatMoney, projectName, userName, statusLabel, formatDate } from '../../utils/format';
 import { exportToCsv } from '../../utils/exportCsv';
 import { showToast } from '../../utils/toast';
 import { PageLoader } from '../../components/ui/PageLoader';
-
-function financeReviewColumns(
-  t: TFunction,
-  i18n: { language: string },
-  onView: (id: string) => void,
-  selectedIds: Set<string>,
-  onToggle: (id: string) => void,
-  onToggleAll: (ids: string[], checked: boolean) => void,
-  visibleIds: string[],
-) {
-  const lang = i18n.language;
-  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
-
-  return [
-    {
-      key: 'sel',
-      header: (
-        <input
-          type="checkbox"
-          className="w-4 h-4 accent-brand-600 cursor-pointer"
-          checked={allSelected}
-          onChange={(e) => onToggleAll(visibleIds, e.target.checked)}
-          aria-label={t('finance.selectAll')}
-        />
-      ),
-      exportable: false,
-      className: 'w-10',
-      render: (inv: Invoice) => (
-        <input
-          type="checkbox"
-          className="w-4 h-4 accent-brand-600 cursor-pointer"
-          checked={selectedIds.has(inv._id)}
-          onChange={() => onToggle(inv._id)}
-          aria-label={inv.referenceNumber}
-        />
-      ),
-    },
-    { key: 'ref', header: t('finance.invoice'), exportHeader: t('finance.invoice'), render: (inv: Invoice) => <b className="text-brand-600">{inv.referenceNumber}</b>, exportValue: (inv: Invoice) => inv.referenceNumber },
-    { key: 'proj', header: t('common.project'), exportHeader: t('common.project'), render: (inv: Invoice) => projectName(inv.project, lang), exportValue: (inv: Invoice) => projectName(inv.project, lang) },
-    { key: 'sup', header: t('pa.supplier'), exportHeader: t('pa.supplier'), render: (inv: Invoice) => inv.supplier || '—', exportValue: (inv: Invoice) => inv.supplier || '' },
-    { key: 'mgr', header: t('pm.projectManager'), exportHeader: t('pm.projectManager'), render: (inv: Invoice) => invoiceManagerName(inv, lang), exportValue: (inv: Invoice) => invoiceManagerName(inv, lang) },
-    { key: 'cat', header: t('pa.category'), exportHeader: t('pa.category'), render: (inv: Invoice) => inv.category || '—', exportValue: (inv: Invoice) => inv.category || '' },
-    { key: 'amt', header: t('common.amount'), exportHeader: t('common.amount'), render: (inv: Invoice) => <Amount>{formatMoney(inv.total, lang)}</Amount>, exportValue: (inv: Invoice) => String(inv.total) },
-    { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (inv: Invoice) => <StatusChip status={inv.status} label={statusLabel(inv.status, t)} />, exportValue: (inv: Invoice) => statusLabel(inv.status, t) },
-    {
-      key: 'act',
-      header: '',
-      exportable: false,
-      render: (inv: Invoice) => (
-        <Button size="sm" variant="ghost" onClick={() => onView(inv._id)}>{t('common.view')}</Button>
-      ),
-    },
-  ];
-}
+import { CustodyReviewCard } from '../../components/custody/CustodyReviewCard';
+import { displayInvoicesTotal, financeEligibleInvoices } from '../../utils/custodyHelpers';
 
 export function FinanceHomePage() {
   const [stats, setStats] = useState<Awaited<ReturnType<typeof dashboardService.finance>> | null>(null);
@@ -97,41 +44,45 @@ export function FinanceHomePage() {
 }
 
 export function FinanceReviewPage() {
-  const { t, i18n } = useTranslation();
-  const lang = i18n.language;
+  const { t } = useTranslation();
   const { runAction } = useUi();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [custodies, setCustodies] = useState<Custody[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
 
-  const load = () =>
-    invoiceService.pendingFinance().then((list) => {
-      setInvoices(list);
-      setSelectedIds((prev) => {
-        const valid = new Set(list.map((i) => i._id));
-        return new Set([...prev].filter((id) => valid.has(id)));
+  const load = () => {
+    setLoading(true);
+    return custodyService.list().then((all) => {
+      const list = all.filter((c) =>
+        (c.invoices ?? []).some((i) => i.status === 'pending_finance'),
+      );
+      setCustodies(list);
+      setSelectedInvoiceIds((prev) => {
+        const valid = new Set<string>();
+        list.forEach((c) =>
+          (c.invoices ?? []).forEach((i) => {
+            if (i.status === 'pending_finance' && prev.has(i._id)) valid.add(i._id);
+          }),
+        );
+        return valid;
       });
-    });
+    }).finally(() => setLoading(false));
+  };
 
   useEffect(() => { load(); }, []);
 
-  const tf = useTableFilter(
-    invoices,
-    [
-      (i) => i.referenceNumber,
-      (i) => i.supplier || '',
-      (i) => i.category || '',
-      (i) => projectName(i.project, lang),
-      (i) => invoiceManagerName(i, lang),
-    ],
-    (i) => i.status,
-  );
+  const toggleCustody = (_custodyId: string, invoiceIds: string[], checked: boolean) => {
+    setSelectedInvoiceIds((prev) => {
+      const next = new Set(prev);
+      invoiceIds.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+      return next;
+    });
+  };
 
-  const visibleIds = useMemo(() => tf.filtered.map((i) => i._id), [tf.filtered]);
-
-  const toggleOne = (id: string) => {
-    setSelectedIds((prev) => {
+  const toggleInvoice = (id: string) => {
+    setSelectedInvoiceIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -139,16 +90,8 @@ export function FinanceReviewPage() {
     });
   };
 
-  const toggleAll = (ids: string[], checked: boolean) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => (checked ? next.add(id) : next.delete(id)));
-      return next;
-    });
-  };
-
   const batchReview = (approved: boolean) => {
-    const ids = [...selectedIds];
+    const ids = [...selectedInvoiceIds];
     if (!ids.length) return showToast(t('finance.selectInvoicesFirst'), 'error');
     if (!approved) {
       setRejectOpen(true);
@@ -156,51 +99,62 @@ export function FinanceReviewPage() {
     }
     runAction(async () => {
       await invoiceService.batchReview(ids, true);
-      setSelectedIds(new Set());
+      setSelectedInvoiceIds(new Set());
       await load();
     }, { success: t('finance.invoicesApproved', { count: ids.length }) });
   };
 
   const confirmReject = (reason: string) => {
-    const ids = [...selectedIds];
+    const ids = [...selectedInvoiceIds];
     runAction(async () => {
       await invoiceService.batchReview(ids, false, reason);
-      setSelectedIds(new Set());
+      setSelectedInvoiceIds(new Set());
       setRejectOpen(false);
       await load();
     }, { success: t('finance.invoicesRejected', { count: ids.length }) });
   };
 
-  const columns = financeReviewColumns(t, i18n, setDetailId, selectedIds, toggleOne, toggleAll, visibleIds);
-
   return (
     <div className="space-y-4">
       <Notice icon="🧾">{t('finance.reviewNotice')}</Notice>
-      <Card title={`🧾 ${t('nav.review')}`} noPadding>
-        <DataTable
-          columns={columns}
-          data={tf.filtered}
-          query={tf.query}
-          onQueryChange={tf.setQuery}
-          searchPlaceholder={t('common.search')}
-          onReset={tf.reset}
-          onRefresh={load}
-          shown={tf.shown}
-          total={tf.total}
-          exportFilename="finance-invoices"
-          exportTitle={t('nav.review')}
-          exportLang={lang}
-          exportRowLabel={lang === 'ar' ? 'فاتورة' : 'invoices'}
-          emptyText={t('finance.noPendingInvoices')}
-          toolbarExtra={
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[11px] text-muted font-bold">{t('finance.selectedCount', { count: selectedIds.size })}</span>
-              <Button size="sm" disabled={!selectedIds.size} onClick={() => batchReview(true)}>{t('finance.approveSelected')}</Button>
-              <Button size="sm" variant="red" disabled={!selectedIds.size} onClick={() => batchReview(false)}>{t('finance.rejectSelected')}</Button>
-            </div>
-          }
-        />
+
+      <Card className="!p-0 overflow-hidden">
+        <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b border-[#eef1f6] bg-[#fafbfd]">
+          <span className="text-[11px] text-muted font-bold">
+            {t('finance.selectedCount', { count: selectedInvoiceIds.size })}
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" disabled={!selectedInvoiceIds.size} onClick={() => batchReview(true)}>
+              {t('finance.approveSelected')}
+            </Button>
+            <Button size="sm" variant="red" disabled={!selectedInvoiceIds.size} onClick={() => batchReview(false)}>
+              {t('finance.rejectSelected')}
+            </Button>
+          </div>
+        </div>
       </Card>
+
+      {loading ? (
+        <Card><PageLoader compact /></Card>
+      ) : custodies.length === 0 ? (
+        <Card>
+          <p className="text-center text-[#64748b] py-10 text-sm">{t('finance.noPendingInvoices')}</p>
+        </Card>
+      ) : (
+        custodies.map((c) => (
+          <CustodyReviewCard
+            key={c._id}
+            custody={c}
+            onView={setDetailId}
+            selectedInvoiceIds={selectedInvoiceIds}
+            onToggleCustody={toggleCustody}
+            onToggleInvoice={toggleInvoice}
+            reviewStatus="pending_finance"
+            invoiceFilter={(i) => i.status === 'pending_finance'}
+          />
+        ))
+      )}
+
       <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
       <RejectReasonModal open={rejectOpen} onClose={() => setRejectOpen(false)} onConfirm={confirmReject} />
     </div>
@@ -250,7 +204,7 @@ export function FinanceEntriesPage() {
               { key: 'proj', header: t('common.project'), exportHeader: t('common.project'), render: (c) => projectName(c.project, i18n.language), exportValue: (c) => projectName(c.project, i18n.language) },
               { key: 'holder', header: t('roles.project_manager'), exportHeader: t('roles.project_manager'), render: (c) => userName(c.holder, i18n.language), exportValue: (c) => userName(c.holder, i18n.language) },
               { key: 'inv', header: t('nav.invoices'), exportHeader: t('nav.invoices'), render: (c) => String(c.invoices?.length || 0), exportValue: (c) => String(c.invoices?.length || 0) },
-              { key: 'amt', header: t('common.amount'), exportHeader: t('common.amount'), render: (c) => <Amount>{formatMoney(c.spent, i18n.language)}</Amount>, exportValue: (c) => String(c.spent) },
+              { key: 'amt', header: t('common.amount'), exportHeader: t('common.amount'), render: (c) => <Amount>{formatMoney(displayInvoicesTotal(c), i18n.language)}</Amount>, exportValue: (c) => String(displayInvoicesTotal(c)) },
               { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (c) => <StatusChip status={c.status} label={statusLabel(c.status, t)} />, exportValue: (c) => statusLabel(c.status, t) },
             ]}
             data={custodies}
@@ -265,10 +219,12 @@ export function FinanceEntriesPage() {
       )}
 
       {custodies.length === 0 && <Card><p className="text-muted text-sm text-center py-6">{t('finance.noEntries')}</p></Card>}
-      {custodies.map((c) => (
-        <Card key={c._id} title={`${c.custodyNumber} — ${userName(c.holder, i18n.language)}`} subtitle={`${projectName(c.project, i18n.language)} · ${c.invoices?.length || 0} فاتورة`}>
-          <Amount>{formatMoney(c.spent)} ريال</Amount>
-          {c.invoices && c.invoices.length > 0 && (
+      {custodies.map((c) => {
+        const eligible = financeEligibleInvoices(c.invoices);
+        return (
+        <Card key={c._id} title={`${c.custodyNumber} — ${userName(c.holder, i18n.language)}`} subtitle={`${projectName(c.project, i18n.language)} · ${eligible.length} فاتورة معتمدة`}>
+          <Amount>{formatMoney(displayInvoicesTotal(c))} ريال</Amount>
+          {eligible.length > 0 && (
             <div className="mt-3">
               <DataTable
                 columns={[
@@ -288,8 +244,15 @@ export function FinanceEntriesPage() {
                     render: (inv) => <Amount>{formatMoney(inv.total, i18n.language)}</Amount>,
                     exportValue: (inv) => String(inv.total),
                   },
+                  {
+                    key: 'st',
+                    header: t('common.status'),
+                    exportHeader: t('common.status'),
+                    render: (inv) => <StatusChip status={inv.status} label={statusLabel(inv.status, t)} />,
+                    exportValue: (inv) => statusLabel(inv.status, t),
+                  },
                 ]}
-                data={c.invoices}
+                data={eligible}
                 exportFilename={`custody-${c.custodyNumber}-invoices`}
                 exportTitle={`${c.custodyNumber} — ${t('nav.invoices')}`}
                 exportLang={i18n.language}
@@ -299,11 +262,12 @@ export function FinanceEntriesPage() {
             </div>
           )}
           <div className="flex gap-2 mt-3">
-            <Button onClick={() => settle(c._id, true)}>تسوية وإصدار قيد الصرف</Button>
-            <Button variant="red" onClick={() => settle(c._id, false)}>{t('common.reject')}</Button>
+            <Button onClick={() => settle(c._id, true)} disabled={!eligible.length}>{t('finance.postAccrual')}</Button>
+            <Button variant="red" onClick={() => settle(c._id, false)} disabled={!eligible.length}>{t('common.reject')}</Button>
           </div>
         </Card>
-      ))}
+        );
+      })}
       <RejectReasonModal open={rejectOpen} onClose={() => { setRejectOpen(false); setRejectCustodyId(null); }} onConfirm={confirmReject} />
     </div>
   );
@@ -343,7 +307,7 @@ export function FinanceVouchersPage() {
   const { runAction } = useUi();
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const { form, setForm, clearDraft } = useFormDraft('finance.vouchers', EMPTY_VOUCHER_FORM);
+  const { form, setForm, clearDraft } = useFormDraft('admin.vouchers', EMPTY_VOUCHER_FORM);
 
   const load = () => dashboardService.vouchers().then(setVouchers);
   useEffect(() => {

@@ -5,6 +5,7 @@ import { Button } from './Button';
 import { Pagination } from './Pagination';
 import { exportTableToCsv, exportTablePdf, getExportColumns } from '../../utils/exportTable';
 import { showToast } from '../../utils/toast';
+import { PageLoader } from './PageLoader';
 
 export interface Column<T> {
   key: string;
@@ -51,6 +52,8 @@ interface DataTableProps<T> {
   };
   /** داخل Card — بدون إطار خارجي مزدوج */
   embedded?: boolean;
+  /** Show spinner until data is fetched */
+  loading?: boolean;
 }
 
 export function DataTable<T extends { _id?: string; id?: string }>({
@@ -75,6 +78,7 @@ export function DataTable<T extends { _id?: string; id?: string }>({
   exportExcelLabel,
   pagination,
   embedded,
+  loading,
 }: DataTableProps<T>) {
   const { t, i18n } = useTranslation();
   const lang = exportLang ?? i18n.language;
@@ -174,6 +178,9 @@ export function DataTable<T extends { _id?: string; id?: string }>({
         </div>
       )}
       <div className="overflow-x-auto">
+        {loading ? (
+          <PageLoader compact />
+        ) : (
         <table className="w-full text-sm border-collapse min-w-[520px]">
           <thead>
             <tr className="bg-gradient-to-r from-[#eef2f7] to-[#f4f7fb] border-b border-[#dde4ee]">
@@ -206,6 +213,7 @@ export function DataTable<T extends { _id?: string; id?: string }>({
             )}
           </tbody>
         </table>
+        )}
       </div>
       {pagination && (
         <Pagination

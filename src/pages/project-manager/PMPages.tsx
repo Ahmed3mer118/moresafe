@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
@@ -15,11 +16,22 @@ import type { Custody, Project, User, Invoice } from '../../types';
 import { useFormDraft } from '../../hooks/useFormDraft';
 import { useTableFilter } from '../../hooks/useTableFilter';
 import { useUi } from '../../context/UiContext';
-import { formatMoney, projectName, userName, invoiceManagerName, statusLabel, entityId, formatDate } from '../../utils/format';
+import { formatMoney, projectName, userName, invoiceManagerName, statusLabel, entityId, formatDate, managersFromProjects } from '../../utils/format';
 import { chartOrFallback, formatHours } from '../../utils/chartData';
 import { showToast } from '../../utils/toast';
 import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { RejectReasonModal } from '../../components/ui/RejectReasonModal';
+import { PageLoader } from '../../components/ui/PageLoader';
+import { CustodyReviewCard } from '../../components/custody/CustodyReviewCard';
+import { displayInvoicesTotal } from '../../utils/custodyHelpers';
+
+const ARCHIVED_CUSTODY_STATUSES = new Set([
+  'pm_approved',
+  'finance_pending',
+  'settled',
+  'pm_rejected',
+  'finance_rejected',
+]);
 
 function invoiceColumns(
   t: TFunction,
@@ -135,70 +147,8 @@ function invoiceApprovalColumns(
   ];
 }
 
-function CustodyApprovalCard({
-  custody,
-  t,
-  i18n,
-  columns,
-  onApprove,
-}: {
-  custody: Custody;
-  t: TFunction;
-  i18n: { language: string };
-  columns: ReturnType<typeof invoiceColumns>;
-  onApprove: (id: string, approved: boolean) => void;
-}) {
-  return (
-    <Card key={custody._id} noPadding className="overflow-hidden">
-      <div className="px-4 py-3.5 border-b border-[#e8edf4] bg-gradient-to-r from-brand-50/50 to-white flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-brand-200 text-brand-700 text-xs font-bold">
-              {custody.custodyNumber}
-            </span>
-            <span className="font-extrabold text-navy text-sm">{userName(custody.holder, i18n.language)}</span>
-          </div>
-          <div className="text-xs text-[#64748b] mt-1 font-medium">{projectName(custody.project, i18n.language)}</div>
-        </div>
-        <div className="flex flex-wrap items-center gap-4 text-sm">
-          <div className="text-center">
-            <div className="text-[10px] text-[#94a3b8] font-bold">{t('pm.totalLabel')}</div>
-            <Amount>{formatMoney(custody.spent, i18n.language)}</Amount>
-          </div>
-          <div className="text-center">
-            <div className="text-[10px] text-[#94a3b8] font-bold">{t('pm.invoicesLabel')}</div>
-            <span className="font-bold text-navy">{custody.invoices?.length || 0}</span>
-          </div>
-          <StatusChip status={custody.status} label={statusLabel(custody.status, t)} />
-        </div>
-      </div>
-
-      {(custody.invoices?.length ?? 0) > 0 ? (
-        <DataTable
-          columns={columns}
-          data={custody.invoices ?? []}
-          emptyText={t('pm.noInvoices')}
-          embedded
-          exportFilename={`custody-${custody.custodyNumber}-invoices`}
-          exportTitle={`${custody.custodyNumber} — ${t('pm.invoicesLabel')}`}
-          exportLang={i18n.language}
-          exportRowLabel={i18n.language === 'ar' ? 'فاتورة' : 'invoices'}
-        />
-      ) : (
-        <p className="text-center text-[#94a3b8] text-sm py-6">{t('pm.noInvoices')}</p>
-      )}
-
-      {custody.status === 'closed' && (
-        <div className="px-4 py-3.5 border-t border-[#e8edf4] bg-[#fafbfd] flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => onApprove(custody._id, true)}>{t('common.approve')}</Button>
-          <Button size="sm" variant="red" onClick={() => onApprove(custody._id, false)}>{t('common.reject')}</Button>
-        </div>
-      )}
-    </Card>
-  );
-}
-
 export function PMHomePage() {
+  const { i18n } = useTranslation();
   const [data, setData] = useState<Awaited<ReturnType<typeof dashboardService.projectManager>> | null>(null);
   const [pending, setPending] = useState<Custody[]>([]);
 
@@ -229,7 +179,7 @@ export function PMHomePage() {
             {pending.slice(0, 3).map((c) => (
               <div key={c._id} className="flex justify-between items-center p-3 bg-[#f7f9fc] rounded-xl text-sm">
                 <span><b>{c.custodyNumber}</b> — {userName(c.holder, 'ar')}</span>
-                <Amount>{formatMoney(c.spent)}</Amount>
+                <Amount>{formatMoney(displayInvoicesTotal(c), i18n.language)}</Amount>
               </div>
             ))}
           </div>
@@ -268,19 +218,10 @@ export function PMApprovalsPage() {
 
   useEffect(() => { load(); }, [projectId, managerId]);
 
-  const managers = useMemo(() => {
-    const map = new Map<string, User>();
-    invoices.forEach((inv) => {
-      const u = inv.uploadedBy;
-      if (u && typeof u === 'object' && u.name) map.set(entityId(u), u);
-    });
-    if (projectId) {
-      const proj = projects.find((p) => entityId(p) === projectId);
-      const mgr = proj?.manager;
-      if (mgr && typeof mgr === 'object' && mgr.name) map.set(entityId(mgr), mgr);
-    }
-    return [...map.values()];
-  }, [invoices, projects, projectId]);
+  const managers = useMemo(
+    () => managersFromProjects(projects, lang, projectId || undefined),
+    [projects, projectId, lang],
+  );
 
   const tf = useTableFilter(
     invoices,
@@ -438,19 +379,10 @@ export function PMInvoiceArchivePage() {
 
   useEffect(() => { load(); }, [projectId, managerId]);
 
-  const managers = useMemo(() => {
-    const map = new Map<string, User>();
-    invoices.forEach((inv) => {
-      const u = inv.uploadedBy;
-      if (u && typeof u === 'object' && u.name) map.set(entityId(u), u);
-    });
-    if (projectId) {
-      const proj = projects.find((p) => entityId(p) === projectId);
-      const mgr = proj?.manager;
-      if (mgr && typeof mgr === 'object' && mgr.name) map.set(entityId(mgr), mgr);
-    }
-    return [...map.values()];
-  }, [invoices, projects, projectId]);
+  const managers = useMemo(
+    () => managersFromProjects(projects, lang, projectId || undefined),
+    [projects, projectId, lang],
+  );
 
   const tf = useTableFilter(
     invoices,
@@ -541,63 +473,92 @@ export function PMCustodyApprovalsPage() {
   const { runAction } = useUi();
   const [projects, setProjects] = useState<Project[]>([]);
   const [custodies, setCustodies] = useState<Custody[]>([]);
+  const [loading, setLoading] = useState(true);
   const [projectId, setProjectId] = useState('');
   const [selected, setSelected] = useState('');
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectCustodyId, setRejectCustodyId] = useState<string | null>(null);
 
   useEffect(() => { projectService.list().then(setProjects); }, []);
 
   const load = () => {
-    const params: Record<string, string> = { status: 'closed' };
+    const params: Record<string, string> = {};
     if (projectId) params.projectId = projectId;
     if (selected) params.holderId = selected;
-    return custodyService.list(params).then(setCustodies);
+    setLoading(true);
+    return custodyService.list(params).then((all) => {
+      const list = all.filter(
+        (c) =>
+          c.status === 'closed' ||
+          (c.invoices ?? []).some((i) => i.status === 'pending_pm'),
+      );
+      setCustodies(list);
+      setSelectedInvoiceIds((prev) => {
+        const valid = new Set<string>();
+        list.forEach((c) =>
+          (c.invoices ?? []).forEach((i) => {
+            if (i.status === 'pending_pm' && prev.has(i._id)) valid.add(i._id);
+          }),
+        );
+        return valid;
+      });
+    }).finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, [projectId, selected]);
 
-  const managers = useMemo(() => {
-    const map = new Map<string, User>();
-    custodies.forEach((c) => {
-      if (c.holder && typeof c.holder === 'object') map.set(entityId(c.holder), c.holder);
+  const managers = useMemo(
+    () => managersFromProjects(projects, i18n.language, projectId || undefined),
+    [projects, projectId, i18n.language],
+  );
+
+  const toggleCustody = (custodyId: string, invoiceIds: string[], checked: boolean) => {
+    setSelectedInvoiceIds((prev) => {
+      const next = new Set(prev);
+      invoiceIds.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+      return next;
     });
-    if (projectId) {
-      const proj = projects.find((p) => entityId(p) === projectId);
-      const mgr = proj?.manager;
-      if (mgr && typeof mgr === 'object' && mgr.name) map.set(entityId(mgr), mgr);
-    }
-    return [...map.values()];
-  }, [custodies, projects, projectId]);
+    void custodyId;
+  };
 
-  const columns = invoiceColumns(t, i18n, setDetailId);
+  const toggleInvoice = (id: string) => {
+    setSelectedInvoiceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
-  const approve = (id: string, approved: boolean) => {
+  const batchReview = (approved: boolean) => {
+    const ids = [...selectedInvoiceIds];
+    if (!ids.length) return showToast(t('pm.selectInvoicesFirst'), 'error');
     if (!approved) {
-      setRejectCustodyId(id);
       setRejectOpen(true);
       return;
     }
     runAction(async () => {
-      await custodyService.pmApprove(id, true);
-      load();
-    }, { success: t('pm.approved') });
+      await invoiceService.batchPmReview(ids, true);
+      setSelectedInvoiceIds(new Set());
+      await load();
+    }, { success: t('pm.invoicesApproved', { count: ids.length }) });
   };
 
   const confirmReject = (reason: string) => {
-    if (!rejectCustodyId) return;
+    const ids = [...selectedInvoiceIds];
     runAction(async () => {
-      await custodyService.pmApprove(rejectCustodyId, false, reason);
+      await invoiceService.batchPmReview(ids, false, reason);
+      setSelectedInvoiceIds(new Set());
       setRejectOpen(false);
-      setRejectCustodyId(null);
-      load();
-    }, { success: t('pm.rejected') });
+      await load();
+    }, { success: t('pm.invoicesRejected', { count: ids.length }) });
   };
 
   return (
     <div className="space-y-4">
-    
+      <Notice icon="✔">{t('pm.custodyApprovalsNotice')}</Notice>
+
       <Card className="!p-0 overflow-hidden">
         <div className="px-4 py-3.5 border-b border-[#e8edf4] bg-gradient-to-r from-[#f8fafc] to-white">
           <span className="text-sm font-extrabold text-navy">{t('pm.filterCustody')}</span>
@@ -626,39 +587,241 @@ export function PMCustodyApprovalsPage() {
         </div>
       </Card>
 
-      {custodies.length === 0 ? (
+      <Card className="!p-0 overflow-hidden">
+        <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b border-[#eef1f6] bg-[#fafbfd]">
+          <span className="text-[11px] text-muted font-bold">
+            {t('pm.selectedCount', { count: selectedInvoiceIds.size })}
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" disabled={!selectedInvoiceIds.size} onClick={() => batchReview(true)}>
+              {t('pm.approveSelected')}
+            </Button>
+            <Button size="sm" variant="red" disabled={!selectedInvoiceIds.size} onClick={() => batchReview(false)}>
+              {t('pm.rejectSelected')}
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {loading ? (
+        <Card><PageLoader compact /></Card>
+      ) : custodies.length === 0 ? (
         <Card>
           <p className="text-center text-[#64748b] py-10 text-sm">{t('pm.noPending')}</p>
         </Card>
       ) : (
         custodies.map((c) => (
-          <CustodyApprovalCard
+          <CustodyReviewCard
             key={c._id}
             custody={c}
-            t={t}
-            i18n={i18n}
-            columns={columns}
-            onApprove={approve}
+            onView={setDetailId}
+            selectedInvoiceIds={selectedInvoiceIds}
+            onToggleCustody={toggleCustody}
+            onToggleInvoice={toggleInvoice}
+            reviewStatus="pending_pm"
           />
         ))
       )}
 
       <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
-      <RejectReasonModal open={rejectOpen} onClose={() => { setRejectOpen(false); setRejectCustodyId(null); }} onConfirm={confirmReject} />
+      <RejectReasonModal open={rejectOpen} onClose={() => setRejectOpen(false)} onConfirm={confirmReject} />
+    </div>
+  );
+}
+
+export function PMCustodyArchivePage() {
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  const navigate = useNavigate();
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [custodies, setCustodies] = useState<Custody[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [projectId, setProjectId] = useState('');
+  const [managerId, setManagerId] = useState('');
+
+  useEffect(() => { projectService.list().then(setProjects); }, []);
+
+  const load = () => {
+    const params: Record<string, string> = {};
+    if (projectId) params.projectId = projectId;
+    if (managerId) params.holderId = managerId;
+    setLoading(true);
+    return custodyService.list(params).then((all) =>
+      setCustodies(all.filter((c) => ARCHIVED_CUSTODY_STATUSES.has(c.status))),
+    ).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [projectId, managerId]);
+
+  const managers = useMemo(
+    () => managersFromProjects(projects, lang, projectId || undefined),
+    [projects, projectId, lang],
+  );
+
+  const tf = useTableFilter(
+    custodies,
+    [
+      (c) => c.custodyNumber,
+      (c) => projectName(c.project, lang),
+      (c) => userName(c.holder, lang),
+    ],
+    (c) => c.status,
+  );
+
+  return (
+    <div className="space-y-4">
+      <Notice icon="📦">{t('pm.custodyArchiveNotice')}</Notice>
+
+      <Card className="!p-0 overflow-hidden">
+        <div className="px-4 py-3.5 border-b border-[#e8edf4] bg-gradient-to-r from-[#f8fafc] to-white">
+          <span className="text-sm font-extrabold text-navy">{t('pm.filterCustody')}</span>
+        </div>
+        <div className="p-4 flex flex-wrap gap-3 items-end">
+          <FormField label={t('common.project')} className="min-w-[220px] flex-1">
+            <select
+              className={selectClass}
+              value={projectId}
+              onChange={(e) => { setProjectId(e.target.value); setManagerId(''); }}
+            >
+              <option value="">{t('pm.selectProject')}</option>
+              {projects.map((p) => (
+                <option key={entityId(p)} value={entityId(p)}>{projectName(p, lang)}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label={t('pm.projectManager')} className="min-w-[220px] flex-1">
+            <select className={selectClass} value={managerId} onChange={(e) => setManagerId(e.target.value)}>
+              <option value="">{t('pm.allManagers')}</option>
+              {managers.map((h) => (
+                <option key={entityId(h)} value={entityId(h)}>{userName(h, lang)}</option>
+              ))}
+            </select>
+          </FormField>
+        </div>
+      </Card>
+
+      <Card title={`📦 ${t('nav.custodyArchive')}`} noPadding>
+        <DataTable
+          columns={[
+            {
+              key: 'num',
+              header: t('pa.custodyNumber'),
+              render: (c: Custody) => <b className="text-brand-600">{c.custodyNumber}</b>,
+              exportValue: (c: Custody) => c.custodyNumber,
+            },
+            {
+              key: 'mgr',
+              header: t('pm.projectManager'),
+              render: (c: Custody) => userName(c.holder, lang),
+              exportValue: (c: Custody) => userName(c.holder, lang),
+            },
+            {
+              key: 'proj',
+              header: t('common.project'),
+              render: (c: Custody) => projectName(c.project, lang),
+              exportValue: (c: Custody) => projectName(c.project, lang),
+            },
+            {
+              key: 'amt',
+              header: t('common.amount'),
+              render: (c: Custody) => <Amount>{formatMoney(c.spent, lang)}</Amount>,
+              exportValue: (c: Custody) => String(c.spent),
+            },
+            {
+              key: 'inv',
+              header: t('pm.invoicesLabel'),
+              render: (c: Custody) => c.invoices?.length ?? 0,
+              exportValue: (c: Custody) => String(c.invoices?.length ?? 0),
+            },
+            {
+              key: 'st',
+              header: t('common.status'),
+              render: (c: Custody) => <StatusChip status={c.status} label={statusLabel(c.status, t)} />,
+              exportValue: (c: Custody) => statusLabel(c.status, t),
+            },
+            {
+              key: 'date',
+              header: t('common.date'),
+              render: (c: Custody) => formatDate(c.closedAt || c.updatedAt, lang),
+              exportValue: (c: Custody) => formatDate(c.closedAt || c.updatedAt, lang),
+            },
+            {
+              key: 'act',
+              header: '',
+              exportable: false,
+              render: (c: Custody) => (
+                <Button size="sm" variant="ghost" onClick={() => navigate(`/dashboard/project-accountant/custody-archive/${c._id}`)}>
+                  {t('common.view')}
+                </Button>
+              ),
+            },
+          ]}
+          data={tf.filtered}
+          loading={loading}
+          query={tf.query}
+          onQueryChange={tf.setQuery}
+          searchPlaceholder={t('common.search')}
+          onReset={tf.reset}
+          onRefresh={load}
+          shown={tf.shown}
+          total={tf.total}
+          exportFilename="custody-archive"
+          exportTitle={t('nav.custodyArchive')}
+          exportLang={lang}
+          exportRowLabel={lang === 'ar' ? 'عهدة' : 'custodies'}
+          emptyText={t('pm.noArchivedCustodies')}
+        />
+      </Card>
+    </div>
+  );
+}
+
+export function PMCustodyArchiveDetailPage() {
+  const { custodyId } = useParams<{ custodyId: string }>();
+  const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
+  const [custody, setCustody] = useState<Custody | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [detailId, setDetailId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!custodyId) return;
+    setLoading(true);
+    custodyService.get(custodyId).then(setCustody).finally(() => setLoading(false));
+  }, [custodyId]);
+
+  if (loading) {
+    return <Card><PageLoader compact /></Card>;
+  }
+
+  if (!custody) {
+    return <Card><p className="text-center text-muted py-8">{t('common.noData')}</p></Card>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard/project-accountant/custody-archive')}>
+        ← {t('pm.backToCustodyArchive')}
+      </Button>
+
+      <CustodyReviewCard
+        custody={custody}
+        onView={setDetailId}
+        readOnly
+      />
+
+      <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
     </div>
   );
 }
 
 export function PMProjectsPage() {
   const { t, i18n } = useTranslation();
-  const { runAction } = useUi();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [selectedManagerId, setSelectedManagerId] = useState('');
   const [custodies, setCustodies] = useState<Custody[]>([]);
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectCustodyId, setRejectCustodyId] = useState<string | null>(null);
 
   useEffect(() => { projectService.list().then(setProjects); }, []);
 
@@ -677,18 +840,10 @@ export function PMProjectsPage() {
 
   const selectedProject = projects.find((p) => entityId(p) === selectedProjectId);
 
-  const managers = useMemo(() => {
-    if (!selectedProjectId) return [] as User[];
-    const map = new Map<string, User>();
-    const mgr = selectedProject?.manager;
-    if (mgr && typeof mgr === 'object' && mgr.name) map.set(entityId(mgr), mgr);
-    custodies.forEach((c) => {
-      if (c.holder && typeof c.holder === 'object' && c.holder.name) {
-        map.set(entityId(c.holder), c.holder);
-      }
-    });
-    return [...map.values()];
-  }, [selectedProject, custodies, selectedProjectId]);
+  const managers = useMemo(
+    () => managersFromProjects(projects, i18n.language, selectedProjectId || undefined),
+    [projects, selectedProjectId, i18n.language],
+  );
 
   const managerCustodies = useMemo(() => {
     if (!selectedManagerId) return [];
@@ -697,29 +852,6 @@ export function PMProjectsPage() {
 
   const pendingClosed = managerCustodies.filter((c) => c.status === 'closed');
   const openOnes = managerCustodies.filter((c) => c.status === 'open');
-  const columns = invoiceColumns(t, i18n, setDetailId);
-
-  const approve = (id: string, approved: boolean) => {
-    if (!approved) {
-      setRejectCustodyId(id);
-      setRejectOpen(true);
-      return;
-    }
-    runAction(async () => {
-      await custodyService.pmApprove(id, true);
-      loadCustodies();
-    }, { success: t('pm.approved') });
-  };
-
-  const confirmReject = (reason: string) => {
-    if (!rejectCustodyId) return;
-    runAction(async () => {
-      await custodyService.pmApprove(rejectCustodyId, false, reason);
-      setRejectOpen(false);
-      setRejectCustodyId(null);
-      loadCustodies();
-    }, { success: t('pm.rejected') });
-  };
 
   return (
     <div className="space-y-4">
@@ -786,7 +918,7 @@ export function PMProjectsPage() {
         <div className="space-y-3">
           <h3 className="text-sm font-extrabold text-navy px-1">{t('pm.openCustody')}</h3>
           {openOnes.map((c) => (
-            <CustodyApprovalCard key={c._id} custody={c} t={t} i18n={i18n} columns={columns} onApprove={approve} />
+            <CustodyReviewCard key={c._id} custody={c} onView={setDetailId} readOnly />
           ))}
         </div>
       )}
@@ -795,7 +927,7 @@ export function PMProjectsPage() {
         <div className="space-y-3">
           <h3 className="text-sm font-extrabold text-navy px-1">{t('pm.pendingApproval')}</h3>
           {pendingClosed.map((c) => (
-            <CustodyApprovalCard key={c._id} custody={c} t={t} i18n={i18n} columns={columns} onApprove={approve} />
+            <CustodyReviewCard key={c._id} custody={c} onView={setDetailId} readOnly />
           ))}
         </div>
       )}
@@ -819,7 +951,6 @@ export function PMProjectsPage() {
       </Card>
 
       <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
-      <RejectReasonModal open={rejectOpen} onClose={() => { setRejectOpen(false); setRejectCustodyId(null); }} onConfirm={confirmReject} />
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { apiClient, ApiError } from '../core/ApiClient';
-import type { User, Project, Custody, Invoice, Notification, Voucher } from '../types';
+import type { User, Project, Custody, Invoice, Notification, Voucher, CustodyTransaction } from '../types';
 
 export class AuthService {
   async login(email: string, password: string) {
@@ -66,12 +66,32 @@ export class CustodyService {
     return apiClient.get<Custody>(`/custodies/${id}`);
   }
 
-  create(data: { projectId: string; amount: number; type?: string; purpose?: string; holderId?: string }) {
+  create(data: { projectId: string; amount: number; type?: string; purpose?: string; holderId?: string; proof?: { data: string; filename: string; mimeType: string } }) {
     return apiClient.post<Custody>('/custodies', data);
   }
 
-  close(id: string) {
-    return apiClient.post<Custody>(`/custodies/${id}/close`);
+  close(id: string, invoiceIds?: string[]) {
+    return apiClient.post<Custody>(`/custodies/${id}/close`, { invoiceIds });
+  }
+
+  transactions(id: string) {
+    return apiClient.get<CustodyTransaction[]>(`/custodies/${id}/transactions`);
+  }
+
+  myTransactions() {
+    return apiClient.get<(CustodyTransaction & { custodyNumber?: string })[]>('/custodies/my-transactions');
+  }
+
+  disbursementQueue() {
+    return apiClient.get<Custody[]>('/custodies/disbursement-queue');
+  }
+
+  disburse(id: string, data: { proof?: { data: string; filename: string; mimeType: string }; proofUrl?: string; amount?: number; method?: string; bankReference?: string }) {
+    return apiClient.post<Custody>(`/admin/custodies/${id}/disburse`, data);
+  }
+
+  topUp(id: string, data: { amount: number; proof?: { data: string; filename: string; mimeType: string }; proofUrl?: string; description?: string }) {
+    return apiClient.post<Custody>(`/custodies/${id}/top-up`, data);
   }
 
   pmApprove(id: string, approved: boolean, reason?: string) {
@@ -83,8 +103,18 @@ export class CustodyService {
   }
 
   cycleStats() {
-    return apiClient.get<{ engineer: number; pm: number; finance: number; settled: number }>(
+    return apiClient.get<{ pm: number; pa: number; chief: number; disbursement: number; settled: number }>(
       '/custodies/cycle-stats'
+    );
+  }
+
+  update(id: string, data: { amount?: number; purpose?: string; holderId?: string; projectId?: string; type?: string }) {
+    return apiClient.patch<Custody>(`/custodies/${id}`, data);
+  }
+
+  adminTransactions() {
+    return apiClient.get<(CustodyTransaction & { custodyNumber?: string; project?: Project; holder?: User })[]>(
+      '/admin/custody-transactions',
     );
   }
 }
@@ -194,6 +224,58 @@ export class DashboardService {
     }>('/dashboard/admin/analytics');
   }
 
+  adminReports(projectId?: string) {
+    const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    return apiClient.get<{
+      byManager: {
+        userId: string;
+        name: string;
+        nameEn?: string;
+        custodiesCount: number;
+        totalAllocated: number;
+        totalSpent: number;
+        settledCount: number;
+        overBudgetCount: number;
+        openCount: number;
+      }[];
+      byAccountant: {
+        userId: string;
+        name: string;
+        nameEn?: string;
+        reviewedCount: number;
+        approvedCount: number;
+        rejectedCount: number;
+        totalReviewedAmount: number;
+      }[];
+      byChief: {
+        userId: string;
+        name: string;
+        nameEn?: string;
+        settledCount: number;
+        rejectedCount: number;
+      }[];
+      byProject: {
+        projectId: string;
+        name: string;
+        nameEn?: string;
+        budget?: number;
+        custodiesCount: number;
+        totalAllocated: number;
+        totalSpent: number;
+        settledCount: number;
+        overBudgetCount: number;
+      }[];
+      totals: {
+        custodiesCount: number;
+        totalAllocated: number;
+        totalSpent: number;
+        settledCount: number;
+        overBudgetCount: number;
+        invoiceCount: number;
+      };
+    }>(`/dashboard/admin/reports${q}`);
+  }
+
   finance() {
     return apiClient.get<{
       openCustodies: number;
@@ -264,11 +346,11 @@ export class DashboardService {
   }
 
   vouchers() {
-    return apiClient.get<Voucher[]>('/vouchers');
+    return apiClient.get<Voucher[]>('/admin/vouchers');
   }
 
   createVoucher(data: Record<string, unknown>) {
-    return apiClient.post<Voucher>('/vouchers', data);
+    return apiClient.post<Voucher>('/admin/vouchers', data);
   }
 
   settledArchive() {

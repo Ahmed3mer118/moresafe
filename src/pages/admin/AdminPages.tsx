@@ -10,7 +10,6 @@ import { Pagination } from '../../components/ui/Pagination';
 import { CyclePipeline, CycleFlow } from '../../components/ui/CycleFlow';
 import { StatusChip, RoleChip, Amount } from '../../components/ui/Chip';
 import { FormField, inputClass, selectClass } from '../../components/ui/FormField';
-import { ProgressBar } from '../../components/ui/ProgressBar';
 import { ProjectBarChart } from '../../components/charts/DashboardCharts';
 import { useTableFilter } from '../../hooks/useTableFilter';
 import { usePagination } from '../../hooks/usePagination';
@@ -100,7 +99,7 @@ export function AdminHomePage() {
 
 const EMPTY_USER_FORM = { name: '', nameEn: '', email: '', password: '', role: 'project_accountant', isActive: true };
 const USER_DRAFT_OMIT: (keyof typeof EMPTY_USER_FORM)[] = ['password'];
-const EMPTY_PROJECT_FORM = { name: '', nameEn: '', budget: 0, status: 'active', manager: '' };
+const EMPTY_PROJECT_FORM = { name: '', nameEn: '', budget: 0, status: 'active', manager: '', accountant: '' };
 const SETTINGS_INIT = { companyName: '', taxNumber: '' };
 
 function userId(u: User) {
@@ -357,8 +356,8 @@ export function AdminProjectsPage() {
   const { runAction } = useUi();
   const [projects, setProjects] = useState<Project[]>([]);
   const [managers, setManagers] = useState<User[]>([]);
+  const [accountants, setAccountants] = useState<User[]>([]);
   const [modal, setModal] = useState<'create' | 'edit' | null>(null);
-  const [view, setView] = useState<Project | null>(null);
   const [editingId, setEditingId] = useState('');
 
   const draftKey =
@@ -376,6 +375,7 @@ export function AdminProjectsPage() {
   useEffect(() => {
     load();
     userService.list({ role: 'project_manager' }).then(setManagers);
+    userService.list({ role: 'project_accountant' }).then(setAccountants);
   }, []);
 
   useEffect(() => {
@@ -389,6 +389,11 @@ export function AdminProjectsPage() {
       budget: p.budget,
       status: p.status,
       manager: String((p.manager as User & { _id?: string })?._id || (p.manager as User)?.id || ''),
+      accountant: String(
+        (p.accountants?.[0] as User & { _id?: string })?._id
+          || (p.accountants?.[0] as User)?.id
+          || '',
+      ),
     });
   }, [modal, editingId, projects, setForm]);
 
@@ -410,6 +415,7 @@ export function AdminProjectsPage() {
         budget: form.budget,
         status: form.status,
         manager: form.manager || undefined,
+        accountants: form.accountant ? [form.accountant] : [],
       };
       if (modal === 'create') {
         await projectService.create(payload);
@@ -434,14 +440,18 @@ export function AdminProjectsPage() {
               render: (p) => (p.manager ? userName(p.manager, i18n.language) : '—'),
               exportValue: (p) => (p.manager ? userName(p.manager, i18n.language) : ''),
             },
+            {
+              key: 'accountant',
+              header: t('roles.project_accountant'),
+              exportHeader: t('roles.project_accountant'),
+              render: (p) => (p.accountants?.[0] ? userName(p.accountants[0], i18n.language) : '—'),
+              exportValue: (p) => (p.accountants?.[0] ? userName(p.accountants[0], i18n.language) : ''),
+            },
             { key: 'budget', header: t('pm.budget'), exportHeader: t('pm.budget'), render: (p) => <Amount>{formatMoney(p.budget, i18n.language)}</Amount>, exportValue: (p) => String(p.budget ?? 0) },
             { key: 'spent', header: t('pm.spent'), exportHeader: t('pm.spent'), render: (p) => formatMoney(p.spent, i18n.language), exportValue: (p) => String(p.spent ?? 0) },
             { key: 'status', header: t('common.status'), exportHeader: t('common.status'), render: (p) => <StatusChip status={p.status} label={statusLabel(p.status, t)} />, exportValue: (p) => statusLabel(p.status, t) },
             { key: 'act', header: t('common.actions'), exportable: false, render: (p) => (
-              <div className="flex gap-1">
-                <Button size="sm" variant="ghost" onClick={() => setView(p)}>{t('common.view')}</Button>
-                <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>{t('common.edit')}</Button>
-              </div>
+              <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>{t('common.edit')}</Button>
             ) },
           ]}
           data={projects}
@@ -475,18 +485,13 @@ export function AdminProjectsPage() {
               {managers.map((m) => <option key={m.id || m._id} value={m.id || m._id}>{userName(m, i18n.language)}</option>)}
             </select>
           </FormField>
+          <FormField label={t('roles.project_accountant')} full>
+            <select className={selectClass} value={form.accountant} onChange={(e) => setForm({ ...form, accountant: e.target.value })}>
+              <option value="">—</option>
+              {accountants.map((a) => <option key={a.id || a._id} value={a.id || a._id}>{userName(a, i18n.language)}</option>)}
+            </select>
+          </FormField>
         </div>
-      </Modal>
-      <Modal open={!!view} onClose={() => setView(null)} title={view ? projectName(view, i18n.language) : ''} width="lg">
-        {view && (
-          <>
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="p-3 bg-[#f7f9fc] rounded-xl border"><span className="text-[11px] text-muted font-bold">الميزانية</span><div className="font-black text-navy">{formatMoney(view.budget)}</div></div>
-              <div className="p-3 bg-[#f7f9fc] rounded-xl border"><span className="text-[11px] text-muted font-bold">المصروف</span><div className="font-black text-navy">{formatMoney(view.spent)}</div></div>
-            </div>
-            <ProgressBar value={view.spent} max={view.budget} variant={view.spent / view.budget > 0.9 ? 'amber' : 'green'} showLabel label="نسبة الصرف" />
-          </>
-        )}
       </Modal>
     </div>
   );
@@ -560,7 +565,7 @@ const CUSTODY_STATUS_OPTIONS = [
 
 export function AdminCyclePage() {
   const { t, i18n } = useTranslation();
-  const [stats, setStats] = useState({ engineer: 0, pm: 0, finance: 0, settled: 0 });
+  const [stats, setStats] = useState({ pm: 0, pa: 0, chief: 0, disbursement: 0, settled: 0 });
   const [custodies, setCustodies] = useState<Custody[]>([]);
   const tf = useTableFilter(custodies, [(c) => c.custodyNumber, (c) => projectName(c.project, i18n.language)], (c) => c.status);
 

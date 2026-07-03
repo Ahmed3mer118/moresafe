@@ -68,17 +68,41 @@ export interface Custody {
   holder: User;
   amount: number;
   spent: number;
+  submittedSpent?: number;
+  approvedSpent?: number;
+  disbursementAmount?: number;
+  disbursementConfirmedAt?: string;
   remaining?: number;
+  overBudget?: boolean;
   status: string;
+  type?: string;
+  purpose?: string;
   invoices?: Invoice[];
   closedAt?: string;
+  updatedAt?: string;
   pmApprovedAt?: string;
+  pmApprovedBy?: User;
   settlementNumber?: string;
   pmRejectionReason?: string;
   financeRejectionReason?: string;
   accrualEntry?: JournalLine[];
   disbursementEntry?: JournalLine[];
+  disbursementProof?: string;
+  disbursedAt?: string;
   settledAt?: string;
+}
+
+export interface CustodyTransaction {
+  _id: string;
+  custody: string;
+  type: 'allocation' | 'spend' | 'top_up' | 'disbursement' | 'refund' | 'adjustment';
+  amount: number;
+  balanceAfter?: number;
+  description?: string;
+  descriptionEn?: string;
+  proofUrl?: string;
+  createdAt?: string;
+  createdBy?: User;
 }
 
 export interface JournalLine {
@@ -105,6 +129,10 @@ export interface Voucher {
   beneficiary: User;
   amount: number;
   method: string;
+  bankReference?: string;
+  proofUrl?: string;
   voucherDate: string;
+  createdAt?: string;
   project?: Project;
+  custody?: Custody;
 }

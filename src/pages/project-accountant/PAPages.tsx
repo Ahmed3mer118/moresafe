@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
+import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
 import { Card } from '../../components/ui/Card';
@@ -13,10 +14,11 @@ import { useFormDraft } from '../../hooks/useFormDraft';
 import { useTableFilter } from '../../hooks/useTableFilter';
 import { dashboardService, custodyService, invoiceService, projectService } from '../../services';
 import type { Custody, Invoice, Project } from '../../types';
-import { formatMoney, projectName, entityId, statusLabel, invoiceManagerName, userName, formatDate } from '../../utils/format';
+import { formatMoney, projectName, entityId, statusLabel, invoiceManagerName, formatDate } from '../../utils/format';
 import { exportInvoicesFromTable } from '../../utils/exportInvoicesPdf';
 import { showToast } from '../../utils/toast';
-import { ActiveCustodyCard } from '../../components/ui/ActiveCustodyCard';
+import { canUploadToCustody, isInvoiceSubmittedForApproval } from '../../utils/custodyHelpers';
+import { Notice } from '../../components/ui/Notice';
 
 // const PM_BASE = '/dashboard/project-manager';
 
@@ -226,7 +228,21 @@ export function PANewCustodyPage() {
 export function PAInvoicesPage() {
   const { t, i18n } = useTranslation();
   const { runAction } = useUi();
+  const { custodyId: routeCustodyId } = useParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const custodyId = routeCustodyId || searchParams.get('custodyId') || '';
+  const isCustodyScope = Boolean(custodyId);
+
+  useEffect(() => {
+    if (routeCustodyId) {
+      navigate(`/dashboard/project-manager/custody/${routeCustodyId}`, { replace: true });
+    }
+  }, [routeCustodyId, navigate]);
+
+  const [activeCustody, setActiveCustody] = useState<Custody | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<Project[]>([]);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [ocrLoading, setOcrLoading] = useState(false);
@@ -245,17 +261,34 @@ export function PAInvoicesPage() {
   const pendingAfterCurrent = Math.max(0, fileQueue.length - 1);
 
   const load = async () => {
-    const [invResult, projsResult] = await Promise.allSettled([
-      invoiceService.list(),
-      projectService.list(),
-    ]);
+    setLoading(true);
+    const invParams = custodyId ? { custodyId } : undefined;
+    try {
+      const [invResult, projsResult] = await Promise.allSettled([
+        invoiceService.list(invParams),
+        projectService.list(),
+      ]);
 
-    if (invResult.status === 'fulfilled') setInvoices(invResult.value);
-    if (projsResult.status === 'fulfilled') setProjects(projsResult.value);
-    else showToast(t('pa.loadProjectsError'), 'error');
+      if (invResult.status === 'fulfilled') setInvoices(invResult.value);
+      if (projsResult.status === 'fulfilled') setProjects(projsResult.value);
+      else showToast(t('pa.loadProjectsError'), 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [custodyId]);
+
+  useEffect(() => {
+    if (!custodyId) {
+      setActiveCustody(null);
+      return;
+    }
+    custodyService.get(custodyId).then((c) => {
+      setActiveCustody(c);
+      setForm((f) => ({ ...f, projectId: entityId(c.project) }));
+    }).catch(() => setActiveCustody(null));
+  }, [custodyId, setForm]);
 
   const dateLocale = i18n.language === 'ar' ? 'ar-SA' : 'en-SA';
   const lang = i18n.language;
@@ -287,7 +320,19 @@ export function PAInvoicesPage() {
         key: 'ref',
         header: '#',
         exportHeader: '#',
-        render: (i: Invoice) => <b className="text-brand-600 font-black">{i.referenceNumber}</b>,
+        render: (i: Invoice) => (
+          <span className="inline-flex items-center gap-1.5">
+            {isInvoiceSubmittedForApproval(i.status) && (
+              <span
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-black shrink-0"
+                title={t('pa.invoiceSubmitted')}
+              >
+                ✓
+              </span>
+            )}
+            <b className="text-brand-600 font-black">{i.referenceNumber}</b>
+          </span>
+        ),
         exportValue: (i: Invoice) => i.referenceNumber,
       },
       {
@@ -428,12 +473,7 @@ export function PAInvoicesPage() {
       closeUpload();
       return;
     }
-    const remaining = fileQueue.slice(1);
-    setFileQueue(remaining);
-    setLineItems([]);
-    resetForm(resetInvoiceFields(form.projectId));
-    setCurrentFromFile(remaining[0]);
-    runOcr(remaining[0]);
+    void advanceToNextFile(fileQueue.slice(1));
   };
 
   const applyOcrData = (data: Record<string, unknown>) => {
@@ -452,32 +492,47 @@ export function PAInvoicesPage() {
 
     setForm((f) => ({
       ...f,
-      invoiceNumber: String(data.invoiceNumber || f.invoiceNumber || ''),
-      supplier: String(data.supplier || f.supplier || ''),
-      category: String(data.category || f.category || ''),
-      invoiceDate: String(data.invoiceDate || f.invoiceDate).slice(0, 10),
+      invoiceNumber: String(data.invoiceNumber || ''),
+      supplier: String(data.supplier || ''),
+      category: String(data.category || ''),
+      invoiceDate: String(data.invoiceDate || new Date().toISOString()).slice(0, 10),
       subtotal,
       vatAmount,
       total,
-      taxNumber: String(data.taxNumber || f.taxNumber || ''),
+      taxNumber: String(data.taxNumber || ''),
     }));
-    if (items.length) setLineItems(items);
+    setLineItems(items);
+  };
+
+  const scanFileForForm = async (file: File, { silent = false } = {}) => {
+    if (!form.projectId) {
+      showToast(t('pa.selectProjectUpload'), 'error');
+      return false;
+    }
+    setOcrLoading(true);
+    try {
+      const { data } = await invoiceService.scan(file);
+      applyOcrData(data);
+      if (!silent) showToast(t('pa.ocrSuccess'), 'success');
+      return true;
+    } catch {
+      showToast(t('pa.ocrFailed'), 'error');
+      return false;
+    } finally {
+      setOcrLoading(false);
+    }
   };
 
   const runOcr = (file: File) => {
-    if (!form.projectId) {
-      showToast(t('pa.selectProjectUpload'), 'error');
-      return;
-    }
-    runAction(async () => {
-      setOcrLoading(true);
-      try {
-        const { data } = await invoiceService.scan(file);
-        applyOcrData(data);
-      } finally {
-        setOcrLoading(false);
-      }
-    }, { success: t('pa.ocrSuccess'), error: t('pa.ocrFailed') });
+    void scanFileForForm(file);
+  };
+
+  const advanceToNextFile = async (remaining: File[]) => {
+    setFileQueue(remaining);
+    setLineItems([]);
+    resetForm(resetInvoiceFields(form.projectId));
+    setCurrentFromFile(remaining[0]);
+    await scanFileForForm(remaining[0], { silent: true });
   };
 
   const updateLineItem = (index: number, patch: Partial<LineItem>) => {
@@ -502,6 +557,7 @@ export function PAInvoicesPage() {
   };
 
   const saveInvoice = () => {
+    if (!custodyId) return showToast(t('pa.selectCustodyFirst'), 'error');
     if (!form.projectId) return showToast(t('pa.pickProject'), 'error');
     if (!currentFile) return showToast(t('pa.uploadImageRequired'), 'error');
 
@@ -509,6 +565,7 @@ export function PAInvoicesPage() {
       const dataUrl = await fileToBase64(currentFile);
       await invoiceService.create({
         projectId: form.projectId,
+        custodyId,
         invoiceNumber: form.invoiceNumber || `INV-${Date.now()}`,
         supplier: form.supplier,
         category: form.category,
@@ -522,18 +579,14 @@ export function PAInvoicesPage() {
       });
 
       const remaining = fileQueue.slice(1);
-      await load();
 
       if (remaining.length === 0) {
         closeUpload();
+        await load();
         return;
       }
 
-      setFileQueue(remaining);
-      setLineItems([]);
-      resetForm(resetInvoiceFields(form.projectId));
-      setCurrentFromFile(remaining[0]);
-      runOcr(remaining[0]);
+      await advanceToNextFile(remaining);
     }, {
       success: fileQueue.length > 1
         ? t('pa.savedBatch', { current: queueTotal - fileQueue.length + 2, total: queueTotal })
@@ -554,18 +607,39 @@ export function PAInvoicesPage() {
   const selectedProject = projects.find((p) => entityId(p) === form.projectId);
   const uploadReady = Boolean(form.projectId);
 
+  if (routeCustodyId) return null;
+
   return (
     <div className="space-y-4">
+      {isCustodyScope && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => navigate(`/dashboard/project-manager/custody/${custodyId}`)}>
+            ← {t('pa.backToCustody')}
+          </Button>
+          {activeCustody && (
+            <Notice icon="📦">
+              {t('pa.uploadingToCustody', {
+                number: activeCustody.custodyNumber,
+                project: projectName(activeCustody.project, lang),
+              })}
+            </Notice>
+          )}
+        </div>
+      )}
+
       <Card
-        title={`📄 ${t('pa.invoiceLog')}`}
+        title={`📄 ${isCustodyScope ? t('pa.custodyInvoices') : t('pa.invoiceLog')}`}
         action={
-          <Button size="sm" onClick={openUpload}>⊕ {t('pa.uploadNew')}</Button>
+          isCustodyScope && activeCustody && canUploadToCustody(activeCustody.status) ? (
+            <Button size="sm" onClick={openUpload}>⊕ {t('pa.uploadNew')}</Button>
+          ) : undefined
         }
         noPadding
       >
         <DataTable
           columns={invoiceColumns}
           data={tf.filtered}
+          loading={loading}
           query={tf.query}
           onQueryChange={tf.setQuery}
           searchPlaceholder={t('common.search')}
@@ -578,8 +652,8 @@ export function PAInvoicesPage() {
           onRefresh={load}
           shown={tf.shown}
           total={tf.total}
-          exportFilename="my-invoices"
-          exportTitle={t('pa.invoiceLog')}
+          exportFilename={isCustodyScope ? `custody-${custodyId}-invoices` : 'my-invoices'}
+          exportTitle={isCustodyScope ? t('pa.custodyInvoices') : t('pa.invoiceLog')}
           exportRowLabel={lang === 'ar' ? 'فاتورة' : 'invoices'}
           exportPdfLabel={t('common.exportPdf')}
           onExportPdf={exportPdf}
@@ -861,71 +935,6 @@ export function PAInvoicesPage() {
       </Modal>
 
       <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
-    </div>
-  );
-}
-
-export function PACustodyPage() {
-  const { t, i18n } = useTranslation();
-  const { runAction } = useUi();
-  const [custody, setCustody] = useState<Custody | null>(null);
-  const [history, setHistory] = useState<Custody[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-
-  const load = () => {
-    custodyService.getOpen().then(setCustody);
-    custodyService.list().then((all) => setHistory(all.filter((c) => c.status !== 'open')));
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const submitForReview = () => {
-    if (!custody) return;
-    runAction(async () => {
-      setSubmitting(true);
-      try {
-        await custodyService.close(custody._id);
-        load();
-      } finally {
-        setSubmitting(false);
-      }
-    }, { success: t('pa.custodySubmitted') });
-  };
-
-  return (
-    <div className="space-y-4">
-      {custody ? (
-        <ActiveCustodyCard
-          custody={custody}
-          lang={i18n.language}
-          onSubmit={submitForReview}
-          submitting={submitting}
-        />
-      ) : (
-        <Card className="max-w-md">
-          <p className="text-muted text-sm">{t('pa.noActiveCustody')}</p>
-        </Card>
-      )}
-      <Card title={`💼 ${t('pa.custodyHistory')}`} noPadding>
-        <DataTable
-          columns={[
-            { key: 'num', header: '#', exportHeader: '#', render: (c) => <span className="font-bold text-brand-600">{c.custodyNumber}</span>, exportValue: (c) => c.custodyNumber },
-            { key: 'proj', header: t('common.project'), exportHeader: t('common.project'), render: (c) => projectName(c.project, i18n.language), exportValue: (c) => projectName(c.project, i18n.language) },
-            { key: 'mgr', header: t('pm.projectManager'), exportHeader: t('pm.projectManager'), render: (c) => invoiceManagerName({ project: c.project, uploadedBy: c.holder }, i18n.language), exportValue: (c) => userName(c.holder, i18n.language) },
-            { key: 'sent', header: t('pa.submittedAt'), exportHeader: t('pa.submittedAt'), render: (c) => (c.closedAt ? formatDate(c.closedAt, i18n.language) : '—'), exportValue: (c) => formatDate(c.closedAt, i18n.language) },
-            { key: 'approved', header: t('pa.approvedAt'), exportHeader: t('pa.approvedAt'), render: (c) => (c.pmApprovedAt ? formatDate(c.pmApprovedAt, i18n.language) : '—'), exportValue: (c) => formatDate(c.pmApprovedAt, i18n.language) },
-            { key: 'settled', header: t('pa.settledAt'), exportHeader: t('pa.settledAt'), render: (c) => (c.settledAt ? formatDate(c.settledAt, i18n.language) : '—'), exportValue: (c) => formatDate(c.settledAt, i18n.language) },
-            { key: 'amt', header: t('common.amount'), exportHeader: t('common.amount'), render: (c) => <ColoredAmount value={c.spent} variant="total" lang={i18n.language} />, exportValue: (c) => String(c.spent) },
-            { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (c) => <StatusChip status={c.status} label={statusLabel(c.status, t)} />, exportValue: (c) => statusLabel(c.status, t) },
-          ]}
-          data={history}
-          onRefresh={load}
-          exportFilename="custody-history"
-          exportTitle={t('pa.custodyHistory')}
-          exportRowLabel={i18n.language === 'ar' ? 'عهدة' : 'custodies'}
-          emptyText={t('common.noData')}
-        />
-      </Card>
     </div>
   );
 }

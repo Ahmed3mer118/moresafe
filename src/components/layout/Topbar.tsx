@@ -1,10 +1,10 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
-import { useUi } from '../../context/UiContext';
-import { userName } from '../../utils/format';
 import { dashboardService } from '../../services';
+import { useNotificationSync } from '../../hooks/useNotificationPoll';
+import { userName } from '../../utils/format';
 import { ROLE_DASHBOARD, type Notification, type Role } from '../../types';
 
 interface TopbarProps {
@@ -16,7 +16,6 @@ interface TopbarProps {
 export function Topbar({ title, subtitle, onMenuClick }: TopbarProps) {
   const { t, i18n } = useTranslation();
   const { user } = useAuth();
-  const { notifTick } = useUi();
   const [unread, setUnread] = useState(0);
   const [showNotif, setShowNotif] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -24,14 +23,16 @@ export function Topbar({ title, subtitle, onMenuClick }: TopbarProps) {
 
   const notifPath = user ? `${ROLE_DASHBOARD[user.role as Role]}/notifications` : '#';
 
-  const loadNotifications = () => {
-    dashboardService.notifications().then((d) => {
-      setUnread(d.unread);
-      setNotifications(d.notifications.slice(0, 8));
-    }).catch(() => { });
-  };
+  const onNotifData = useCallback((d: { notifications: Notification[]; unread: number }) => {
+    setUnread(d.unread);
+    setNotifications(d.notifications.slice(0, 8));
+  }, []);
 
-  useEffect(() => { loadNotifications(); }, [notifTick]);
+  useNotificationSync(onNotifData, Boolean(user));
+
+  const loadNotifications = () => {
+    dashboardService.notifications().then(onNotifData).catch(() => {});
+  };
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -67,7 +68,12 @@ export function Topbar({ title, subtitle, onMenuClick }: TopbarProps) {
       <div className="relative" ref={panelRef}>
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); setShowNotif(!showNotif); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            const next = !showNotif;
+            setShowNotif(next);
+            if (next) loadNotifications();
+          }}
           className="w-10 h-10 rounded-xl border border-[#e3e9f2] bg-white grid place-items-center text-lg relative hover:border-brand-300 transition-colors"
         >
           🔔

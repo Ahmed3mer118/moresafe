@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from './Card';
 import { Button } from './Button';
@@ -8,12 +8,12 @@ import { useUi } from '../../context/UiContext';
 
 export function NotificationsPage() {
   const { t, i18n } = useTranslation();
-  const { runAction } = useUi();
+  const { runAction, notifTick } = useUi();
   const [items, setItems] = useState<Notification[]>([]);
 
   const load = () => dashboardService.notifications().then((d) => setItems(d.notifications));
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [notifTick]);
 
   const markAll = () =>
     runAction(async () => {

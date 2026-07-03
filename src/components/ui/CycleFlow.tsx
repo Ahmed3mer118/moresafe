@@ -1,26 +1,30 @@
 import clsx from 'clsx';
-
-const STEPS = [
-  { key: 'engineer', icon: '👷', label: 'Accountant' },
-  { key: 'pm', icon: '👔', label: 'PM' },
-  { key: 'finance', icon: '🏦', label: 'Finance' },
-  { key: 'done', icon: '✓', label: 'Settled' },
-];
+import { useTranslation } from 'react-i18next';
 
 function stepIndex(status: string) {
   if (status === 'open' || status === 'accumulated') return 0;
   if (status === 'closed' || status === 'pending_pm' || status === 'pm_rejected') return 1;
   if (status === 'pm_approved' || status === 'pending_finance' || status === 'finance_rejected') return 2;
-  if (status === 'settled') return 3;
+  if (status === 'finance_pending') return 3;
+  if (status === 'settled') return 4;
   return 0;
 }
 
 export function CycleFlow({ status }: { status: string }) {
+  const { t } = useTranslation();
+  const STEPS = [
+    { key: 'pm', icon: '👷', label: t('cycle.stepPm') },
+    { key: 'pa', icon: '📋', label: t('cycle.stepPa') },
+    { key: 'chief', icon: '🧾', label: t('cycle.stepChief') },
+    { key: 'disburse', icon: '🏦', label: t('cycle.stepDisburse') },
+    { key: 'done', icon: '✓', label: t('cycle.stepDone') },
+  ];
+
   const current = stepIndex(status);
   const rejected = status.includes('reject');
 
   if (rejected) {
-    return <span className="inline-block bg-red-50 text-red-700 text-[11px] font-extrabold px-2.5 py-1 rounded-full">مرفوض</span>;
+    return <span className="inline-block bg-red-50 text-red-700 text-[11px] font-extrabold px-2.5 py-1 rounded-full">{t('cycle.rejected')}</span>;
   }
 
   return (
@@ -45,27 +49,30 @@ export function CycleFlow({ status }: { status: string }) {
   );
 }
 
-export function CyclePipeline({ stats }: { stats: { engineer: number; pm: number; finance: number; settled: number } }) {
+export function CyclePipeline({ stats }: { stats: { pm: number; pa: number; chief: number; disbursement: number; settled: number } }) {
+  const { t } = useTranslation();
   const stages = [
-    { icon: '👷', label: 'عند المحاسب', sub: 'مسودة / جارية', count: stats.engineer },
-    { icon: '👔', label: 'مدير المشروع', sub: 'بانتظار الاعتماد', count: stats.pm },
-    { icon: '🏦', label: 'المالية', sub: 'بانتظار التسوية', count: stats.finance },
-    { icon: '✓', label: 'مسوّاة', sub: 'تم الصرف', count: stats.settled },
+    { icon: '👷', label: t('cycle.stepPm'), sub: t('cycle.subPm'), count: stats.pm },
+    { icon: '📋', label: t('cycle.stepPa'), sub: t('cycle.subPa'), count: stats.pa },
+    { icon: '🧾', label: t('cycle.stepChief'), sub: t('cycle.subChief'), count: stats.chief },
+    { icon: '🏦', label: t('cycle.stepDisburse'), sub: t('cycle.subDisburse'), count: stats.disbursement },
+    { icon: '✓', label: t('cycle.stepDone'), sub: t('cycle.subDone'), count: stats.settled },
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
       {stages.map((s, i) => (
         <div
           key={s.label}
           className={clsx(
             'relative text-center rounded-2xl border p-4 shadow-sm',
-            s.count > 0 && i === 3 ? 'border-brand-200 bg-gradient-to-b from-brand-50 to-white' : 'border-[#e3e9f2] bg-white'
+            s.count > 0 && i === 4 ? 'border-brand-200 bg-gradient-to-b from-brand-50 to-white' : 'border-[#e3e9f2] bg-white'
           )}
         >
           {i > 0 && <span className="hidden lg:block absolute -start-3 top-1/2 -translate-y-1/2 text-[#9fb2cc] font-bold">←</span>}
           <div className="text-2xl mb-1">{s.icon}</div>
           <div className="text-3xl font-black text-navy">{s.count}</div>
+          <div className="text-[10px] text-brand-600 font-bold mt-0.5">{t('cycle.workCount', { count: s.count })}</div>
           <div className="text-sm font-extrabold text-navy mt-1">{s.label}</div>
           <div className="text-[11px] text-muted">{s.sub}</div>
         </div>
