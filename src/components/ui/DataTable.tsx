@@ -6,6 +6,7 @@ import { Pagination } from './Pagination';
 import { exportTableToCsv, exportTablePdf, getExportColumns } from '../../utils/exportTable';
 import { showToast } from '../../utils/toast';
 import { PageLoader } from './PageLoader';
+import { RefreshButton } from './RefreshButton';
 
 export interface Column<T> {
   key: string;
@@ -87,7 +88,7 @@ export function DataTable<T extends { _id?: string; id?: string }>({
 
   const exportCols = getExportColumns(columns);
   const canExport = Boolean(exportFilename) && exportCols.length > 0;
-  const hasToolbar = onQueryChange || statusFilter || toolbarExtra || canExport || onExportPdf;
+  const hasToolbar = onQueryChange || statusFilter || toolbarExtra || canExport || onExportPdf || onRefresh;
 
   const handleExportExcel = () => {
     if (!exportFilename) return;
@@ -152,18 +153,15 @@ export function DataTable<T extends { _id?: string; id?: string }>({
               ))}
             </select>
           )}
-          {(onRefresh || onReset) && (
-            <button
-              type="button"
-              onClick={() => {
+          {onRefresh && (
+            <RefreshButton
+              variant="icon"
+              loading={loading}
+              onRefresh={async () => {
                 onReset?.();
-                onRefresh?.();
+                await onRefresh();
               }}
-              className="w-8 h-8 border border-[#e3e9f2] rounded-lg bg-white text-muted hover:text-brand-500 text-sm"
-              title={onRefresh ? 'Refresh' : 'Reset'}
-            >
-              ↺
-            </button>
+            />
           )}
           {shown !== undefined && total !== undefined && (
             <span className="text-[11px] text-muted font-bold ms-auto">{shown} / {total}</span>

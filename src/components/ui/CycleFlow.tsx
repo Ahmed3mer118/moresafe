@@ -10,7 +10,7 @@ function stepIndex(status: string) {
   return 0;
 }
 
-export function CycleFlow({ status }: { status: string }) {
+export function CycleFlow({ status, hasPendingPm }: { status: string; hasPendingPm?: boolean }) {
   const { t } = useTranslation();
   const STEPS = [
     { key: 'pm', icon: '👷', label: t('cycle.stepPm') },
@@ -20,8 +20,10 @@ export function CycleFlow({ status }: { status: string }) {
     { key: 'done', icon: '✓', label: t('cycle.stepDone') },
   ];
 
-  const current = stepIndex(status);
-  const rejected = status.includes('reject');
+  const resubmitActive = hasPendingPm && ['pm_rejected', 'finance_rejected', 'settled'].includes(status);
+  const effectiveStatus = resubmitActive ? 'closed' : status;
+  const current = stepIndex(effectiveStatus);
+  const rejected = status.includes('reject') && !resubmitActive;
 
   if (rejected) {
     return <span className="inline-block bg-red-50 text-red-700 text-[11px] font-extrabold px-2.5 py-1 rounded-full">{t('cycle.rejected')}</span>;

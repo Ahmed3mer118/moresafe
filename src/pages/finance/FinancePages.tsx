@@ -7,7 +7,6 @@ import { DataTable } from '../../components/ui/DataTable';
 import { Notice } from '../../components/ui/Notice';
 import { StatusChip, Amount, Chip } from '../../components/ui/Chip';
 import { FormField, inputClass, selectClass } from '../../components/ui/FormField';
-import { ProgressBar } from '../../components/ui/ProgressBar';
 import { CustodyArchiveCard, JournalTable } from '../../components/ui/JournalBlock';
 import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { RejectReasonModal } from '../../components/ui/RejectReasonModal';
@@ -16,29 +15,63 @@ import { useFormDraft } from '../../hooks/useFormDraft';
 import { useTableFilter } from '../../hooks/useTableFilter';
 import { useUi } from '../../context/UiContext';
 import { dashboardService, custodyService, invoiceService, projectService, userService } from '../../services';
-import type { Custody, Invoice, Project, User, Voucher } from '../../types';
-import { formatMoney, projectName, userName, statusLabel, formatDate } from '../../utils/format';
+import type { Custody, Invoice, User, Voucher } from '../../types';
+import { displayInvoicesTotal, financeEligibleInvoices } from '../../utils/custodyHelpers';
+import { formatMoney, projectName, userName, statusLabel, formatDate, assetUrl } from '../../utils/format';
 import { exportToCsv } from '../../utils/exportCsv';
 import { showToast } from '../../utils/toast';
 import { PageLoader } from '../../components/ui/PageLoader';
+import { RefreshButton } from '../../components/ui/RefreshButton';
 import { CustodyReviewCard } from '../../components/custody/CustodyReviewCard';
-import { displayInvoicesTotal, financeEligibleInvoices } from '../../utils/custodyHelpers';
+import { BudgetOverview } from '../../components/budget/BudgetOverview';
+import { summarizeProjects } from '../../utils/budgetHelpers';
 
 export function FinanceHomePage() {
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
   const [stats, setStats] = useState<Awaited<ReturnType<typeof dashboardService.finance>> | null>(null);
-  useEffect(() => { dashboardService.finance().then(setStats); }, []);
+  const [budgetData, setBudgetData] = useState<Awaited<ReturnType<typeof projectService.budgets>> | null>(null);
+  const [loading, setLoading] = useState(true);
 
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [s, b] = await Promise.all([
+        dashboardService.finance(),
+        projectService.budgets(),
+      ]);
+      setStats(s);
+      setBudgetData(b);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => { load(); }, []);
+
+  const budgetTotals = budgetData?.totals ?? summarizeProjects(budgetData?.projects);
 
   return (
     <div className="space-y-5">
+      <div className="flex justify-end">
+        <RefreshButton onRefresh={load} loading={loading} />
+      </div>
       <StatsGrid>
-        <StatCard icon="💼" label="عهد مفتوحة" value={stats?.openCustodies ?? 0} color="blue" trend="قيد المتابعة" />
-        <StatCard icon="📒" label="بانتظار التسوية" value={stats?.pendingSettlement ?? 0} color="amber" trend="بعد اعتماد المدير" trendUp={false} />
-        <StatCard icon="🧾" label="فواتير بانتظار المراجعة" value={stats?.pendingInvoices ?? 0} color="amber" />
-        <StatCard icon="💰" label="إجمالي المصروف" value={formatMoney(stats?.totalExpense ?? 0)} color="green" trend="ريال" trendUp />
+        <StatCard icon="💼" label={t('finance.stats.openCustodies')} value={stats?.openCustodies ?? 0} color="blue" trend={t('finance.stats.inProgress')} />
+        <StatCard icon="📒" label={t('finance.stats.pendingSettlement')} value={stats?.pendingSettlement ?? 0} color="amber" trend={t('finance.stats.afterPmApproval')} trendUp={false} />
+        <StatCard icon="🧾" label={t('finance.stats.pendingInvoices')} value={stats?.pendingInvoices ?? 0} color="amber" />
+        <StatCard icon="💰" label={t('finance.stats.totalExpense')} value={formatMoney(stats?.totalExpense ?? 0, lang)} color="green" trend={t('common.sar')} trendUp />
       </StatsGrid>
 
+      <Card title={`📊 ${t('budget.overviewTitle')}`}>
+        <BudgetOverview
+          projects={budgetData?.projects ?? []}
+          totals={budgetTotals}
+          loading={loading}
+          compact
+          showSummary={false}
+        />
+      </Card>
     </div>
   );
 }
@@ -123,7 +156,8 @@ export function FinanceReviewPage() {
           <span className="text-[11px] text-muted font-bold">
             {t('finance.selectedCount', { count: selectedInvoiceIds.size })}
           </span>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <RefreshButton onRefresh={load} loading={loading} />
             <Button size="sm" disabled={!selectedInvoiceIds.size} onClick={() => batchReview(true)}>
               {t('finance.approveSelected')}
             </Button>
@@ -163,12 +197,48 @@ export function FinanceReviewPage() {
 
 export function FinanceEntriesPage() {
   const { t, i18n } = useTranslation();
+  const lang = i18n.language;
   const { runAction } = useUi();
   const [custodies, setCustodies] = useState<Custody[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectCustodyId, setRejectCustodyId] = useState<string | null>(null);
-  const load = () => custodyService.list({ status: 'pm_approved' }).then(setCustodies);
+
+  const load = () => {
+    setLoading(true);
+    return custodyService.list()
+      .then((all) =>
+        setCustodies(
+          all.filter(
+            (c) =>
+              c.status === 'pm_approved'
+              || (c.invoices ?? []).some(
+                (i) => i.status === 'pending_finance' || i.status === 'pm_approved',
+              ),
+          ),
+        ),
+      )
+      .finally(() => setLoading(false));
+  };
+
   useEffect(() => { load(); }, []);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return custodies;
+    const q = query.toLowerCase();
+    return custodies.filter(
+      (c) =>
+        c.custodyNumber.toLowerCase().includes(q)
+        || projectName(c.project, lang).toLowerCase().includes(q)
+        || (c.invoices ?? []).some(
+          (i) =>
+            i.referenceNumber.toLowerCase().includes(q)
+            || (i.invoiceNumber || '').toLowerCase().includes(q),
+        ),
+    );
+  }, [custodies, query, lang]);
 
   const settle = (id: string, approved: boolean) => {
     if (!approved) {
@@ -196,105 +266,141 @@ export function FinanceEntriesPage() {
     <div className="space-y-4">
       <Notice icon="📒">{t('finance.entriesNotice')}</Notice>
 
-      {custodies.length > 0 && (
-        <Card title={t('nav.entries')} noPadding>
-          <DataTable
-            columns={[
-              { key: 'num', header: '#', exportHeader: '#', render: (c) => <b>{c.custodyNumber}</b>, exportValue: (c) => c.custodyNumber },
-              { key: 'proj', header: t('common.project'), exportHeader: t('common.project'), render: (c) => projectName(c.project, i18n.language), exportValue: (c) => projectName(c.project, i18n.language) },
-              { key: 'holder', header: t('roles.project_manager'), exportHeader: t('roles.project_manager'), render: (c) => userName(c.holder, i18n.language), exportValue: (c) => userName(c.holder, i18n.language) },
-              { key: 'inv', header: t('nav.invoices'), exportHeader: t('nav.invoices'), render: (c) => String(c.invoices?.length || 0), exportValue: (c) => String(c.invoices?.length || 0) },
-              { key: 'amt', header: t('common.amount'), exportHeader: t('common.amount'), render: (c) => <Amount>{formatMoney(displayInvoicesTotal(c), i18n.language)}</Amount>, exportValue: (c) => String(displayInvoicesTotal(c)) },
-              { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (c) => <StatusChip status={c.status} label={statusLabel(c.status, t)} />, exportValue: (c) => statusLabel(c.status, t) },
-            ]}
-            data={custodies}
-            onRefresh={load}
-            exportFilename="finance-entries-custodies"
-            exportTitle={t('nav.entries')}
-            exportLang={i18n.language}
-            exportRowLabel={i18n.language === 'ar' ? 'عهدة' : 'custodies'}
-            emptyText={t('finance.noEntries')}
-          />
-        </Card>
+      <Card className="!p-0 overflow-hidden">
+        <div className="px-4 py-3.5 border-b border-[#e8edf4] bg-gradient-to-r from-[#f8fafc] to-white flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm font-extrabold text-navy">{t('pm.filterCustody')}</span>
+          <RefreshButton onRefresh={load} loading={loading} />
+        </div>
+        <div className="p-4">
+          <FormField label={t('common.search')}>
+            <input
+              className={inputClass}
+              placeholder={t('finance.searchCustodyInvoice')}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </FormField>
+          <p className="text-xs text-muted mt-2">{t('finance.expandCustodyHint')}</p>
+        </div>
+      </Card>
+
+      {loading ? (
+        <Card><PageLoader compact /></Card>
+      ) : filtered.length === 0 ? (
+        <Card><p className="text-muted text-sm text-center py-6">{t('finance.noEntries')}</p></Card>
+      ) : (
+        filtered.map((c) => {
+          const eligible = financeEligibleInvoices(c.invoices);
+          const spent = displayInvoicesTotal(c);
+          return (
+            <details key={c._id} className="group rounded-2xl border border-[#e3e9f2] bg-white shadow-sm overflow-hidden">
+              <summary className="px-4 py-4 cursor-pointer list-none hover:bg-[#fafbfd] [&::-webkit-details-marker]:hidden">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <span className="inline-flex px-2.5 py-1 rounded-lg bg-brand-50 border border-brand-200 text-brand-700 text-xs font-bold">
+                      {c.custodyNumber}
+                    </span>
+                    <span className="font-extrabold text-navy text-sm">{projectName(c.project, lang)}</span>
+                    <StatusChip status={c.status} label={statusLabel(c.status, t)} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4 text-sm">
+                    <div className="text-center">
+                      <div className="text-[10px] text-muted font-bold">{t('finance.custodyBudget')}</div>
+                      <Amount>{formatMoney(c.amount ?? 0, lang)}</Amount>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-[10px] text-muted font-bold">{t('admin.invoicesTotal')}</div>
+                      <Amount>{formatMoney(spent, lang)}</Amount>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-[10px] text-muted font-bold">{t('nav.invoices')}</div>
+                      <span className="font-bold text-navy">{eligible.length}</span>
+                    </div>
+                    <span className="text-brand-600 text-xs font-bold">▼ {t('finance.invoiceDetails')}</span>
+                  </div>
+                </div>
+              </summary>
+
+              <div className="border-t border-[#eef1f6] bg-[#fcfdfe] px-4 py-4 space-y-3">
+                {eligible.length === 0 ? (
+                  <p className="text-center text-muted text-sm py-4">{t('common.noData')}</p>
+                ) : (
+                  eligible.map((inv) => {
+                    const imgUrl = inv.attachments?.[0]?.url || inv.attachmentUrl;
+                    const preview = imgUrl ? assetUrl(imgUrl) : null;
+                    const isPdf = inv.attachments?.[0]?.mimeType?.includes('pdf');
+                    return (
+                      <div
+                        key={inv._id}
+                        className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-[#e8edf4] bg-white"
+                      >
+                        {preview && !isPdf ? (
+                          <button
+                            type="button"
+                            className="shrink-0 w-14 h-14 rounded-lg overflow-hidden border border-[#dde4ee] hover:ring-2 hover:ring-brand-300"
+                            onClick={() => setDetailId(inv._id)}
+                          >
+                            <img src={preview} alt="" className="w-full h-full object-cover" />
+                          </button>
+                        ) : (
+                          <div className="w-14 h-14 rounded-lg bg-[#f1f5f9] grid place-items-center text-xl shrink-0">🧾</div>
+                        )}
+                        <div className="flex-1 min-w-[140px]">
+                          <div className="font-bold text-navy">{inv.referenceNumber}</div>
+                          <div className="text-xs text-muted">{inv.supplier || '—'} · {inv.category || '—'}</div>
+                        </div>
+                        <Amount>{formatMoney(inv.total, lang)}</Amount>
+                        <StatusChip status={inv.status} label={statusLabel(inv.status, t)} />
+                        <Button size="sm" variant="ghost" onClick={() => setDetailId(inv._id)}>
+                          {t('finance.viewInvoiceImage')}
+                        </Button>
+                      </div>
+                    );
+                  })
+                )}
+                <div className="flex flex-wrap gap-2 pt-2 border-t border-[#eef1f6]">
+                  <Button onClick={() => settle(c._id, true)} disabled={!eligible.length}>
+                    {t('finance.postAccrual')}
+                  </Button>
+                  <Button variant="red" onClick={() => settle(c._id, false)} disabled={!eligible.length}>
+                    {t('common.reject')}
+                  </Button>
+                </div>
+              </div>
+            </details>
+          );
+        })
       )}
 
-      {custodies.length === 0 && <Card><p className="text-muted text-sm text-center py-6">{t('finance.noEntries')}</p></Card>}
-      {custodies.map((c) => {
-        const eligible = financeEligibleInvoices(c.invoices);
-        return (
-        <Card key={c._id} title={`${c.custodyNumber} — ${userName(c.holder, i18n.language)}`} subtitle={`${projectName(c.project, i18n.language)} · ${eligible.length} فاتورة معتمدة`}>
-          <Amount>{formatMoney(displayInvoicesTotal(c))} ريال</Amount>
-          {eligible.length > 0 && (
-            <div className="mt-3">
-              <DataTable
-                columns={[
-                  { key: 'ref', header: t('finance.invoice'), exportHeader: t('finance.invoice'), render: (inv) => <b>{inv.referenceNumber}</b>, exportValue: (inv) => inv.referenceNumber },
-                  {
-                    key: 'uploader',
-                    header: t('roles.project_manager'),
-                    exportHeader: t('roles.project_manager'),
-                    render: (inv) => userName(inv.uploadedBy || c.holder, i18n.language),
-                    exportValue: (inv) => userName(inv.uploadedBy || c.holder, i18n.language),
-                  },
-                  { key: 'sup', header: t('pa.supplier'), exportHeader: t('pa.supplier'), render: (inv) => inv.supplier || '—', exportValue: (inv) => inv.supplier || '' },
-                  {
-                    key: 'amt',
-                    header: t('common.amount'),
-                    exportHeader: t('common.amount'),
-                    render: (inv) => <Amount>{formatMoney(inv.total, i18n.language)}</Amount>,
-                    exportValue: (inv) => String(inv.total),
-                  },
-                  {
-                    key: 'st',
-                    header: t('common.status'),
-                    exportHeader: t('common.status'),
-                    render: (inv) => <StatusChip status={inv.status} label={statusLabel(inv.status, t)} />,
-                    exportValue: (inv) => statusLabel(inv.status, t),
-                  },
-                ]}
-                data={eligible}
-                exportFilename={`custody-${c.custodyNumber}-invoices`}
-                exportTitle={`${c.custodyNumber} — ${t('nav.invoices')}`}
-                exportLang={i18n.language}
-                exportRowLabel={i18n.language === 'ar' ? 'فاتورة' : 'invoices'}
-                emptyText={t('common.noData')}
-              />
-            </div>
-          )}
-          <div className="flex gap-2 mt-3">
-            <Button onClick={() => settle(c._id, true)} disabled={!eligible.length}>{t('finance.postAccrual')}</Button>
-            <Button variant="red" onClick={() => settle(c._id, false)} disabled={!eligible.length}>{t('common.reject')}</Button>
-          </div>
-        </Card>
-        );
-      })}
+      <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
       <RejectReasonModal open={rejectOpen} onClose={() => { setRejectOpen(false); setRejectCustodyId(null); }} onConfirm={confirmReject} />
     </div>
   );
 }
 
 export function FinanceBudgetsPage() {
-  const { t, i18n } = useTranslation();
-  const [projects, setProjects] = useState<Project[]>([]);
-  useEffect(() => { projectService.budgets().then(setProjects); }, []);
+  const { t } = useTranslation();
+  const [budgetData, setBudgetData] = useState<Awaited<ReturnType<typeof projectService.budgets>> | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setBudgetData(await projectService.budgets());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
 
   return (
-    <Card title={t('nav.budgets')}>
-      <div className="space-y-5">
-        {projects.map((p) => {
-          const pct = p.budget ? p.spent / p.budget : 0;
-          const variant = pct > 0.9 ? 'amber' : pct > 0.75 ? 'default' : 'green';
-          return (
-            <div key={p._id}>
-              <div className="flex justify-between text-sm font-bold mb-2">
-                <span className="text-navy">{projectName(p, i18n.language)}</span>
-                <span className="text-muted text-xs">{formatMoney(p.spent)} / {formatMoney(p.budget)}</span>
-              </div>
-              <ProgressBar value={p.spent} max={p.budget} variant={variant} />
-            </div>
-          );
-        })}
-      </div>
+    <Card title={`📊 ${t('nav.budgets')}`} action={<RefreshButton onRefresh={load} loading={loading} />}>
+      <BudgetOverview
+        projects={budgetData?.projects ?? []}
+        totals={budgetData?.totals}
+        loading={loading}
+      />
     </Card>
   );
 }
@@ -355,6 +461,7 @@ export function FinanceVouchersPage() {
             { key: 'dt', header: t('common.date'), exportHeader: t('common.date'), render: (v) => formatDate(v.voucherDate, i18n.language), exportValue: (v) => formatDate(v.voucherDate, i18n.language) },
           ]}
           data={vouchers}
+          onRefresh={load}
           exportFilename="vouchers"
           exportTitle={t('nav.vouchers')}
           exportLang={i18n.language}
@@ -368,11 +475,25 @@ export function FinanceVouchersPage() {
 export function FinanceArchivePage() {
   const { i18n } = useTranslation();
   const [custodies, setCustodies] = useState<Custody[]>([]);
-  useEffect(() => { dashboardService.settledArchive().then(setCustodies); }, []);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setCustodies(await dashboardService.settledArchive());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
 
   return (
     <div className="space-y-4">
-      <Notice icon="🗄️">عهد متسوية مؤرشفة — اضغط للمراجعة: قيد الاستحقاق، قيد الصرف، والفواتير.</Notice>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Notice icon="🗄️">عهد متسوية مؤرشفة — اضغط للمراجعة: قيد الاستحقاق، قيد الصرف، والفواتير.</Notice>
+        <RefreshButton onRefresh={load} loading={loading} />
+      </div>
       {custodies.map((c) => (
         <CustodyArchiveCard
           key={c._id}
@@ -393,7 +514,18 @@ export function FinanceTaxPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  useEffect(() => { dashboardService.taxCompliance().then(setInvoices); }, []);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setInvoices(await dashboardService.taxCompliance());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
   const tf = useTableFilter(invoices, [(i) => i.referenceNumber, (i) => i.supplier || ''], (i) => (i.taxVerified ? 'ok' : 'missing'));
 
   return (
@@ -409,9 +541,11 @@ export function FinanceTaxPage() {
             { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (i) => <StatusChip status={i.taxVerified ? 'active' : 'pm_rejected'} label={i.taxVerified ? (lang === 'ar' ? 'مطابق' : 'Verified') : (lang === 'ar' ? 'رقم ناقص' : 'Missing')} />, exportValue: (i) => (i.taxVerified ? (lang === 'ar' ? 'مطابق' : 'Verified') : (lang === 'ar' ? 'رقم ناقص' : 'Missing')) },
           ]}
           data={tf.filtered}
+          loading={loading}
           query={tf.query}
           onQueryChange={tf.setQuery}
           onReset={tf.reset}
+          onRefresh={load}
           shown={tf.shown}
           total={tf.total}
           exportFilename="tax-compliance"
@@ -428,12 +562,25 @@ export function FinanceReportsPage() {
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof dashboardService.financeReports>> | null>(null);
   const [custodies, setCustodies] = useState<Custody[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    dashboardService.financeReports().then(setSummary);
-    custodyService.list().then(setCustodies);
-    invoiceService.list().then(setInvoices);
-  }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [s, c, inv] = await Promise.all([
+        dashboardService.financeReports(),
+        custodyService.list(),
+        invoiceService.list(),
+      ]);
+      setSummary(s);
+      setCustodies(c);
+      setInvoices(inv);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
 
   const exportOpen = () => {
     exportToCsv('open-custodies', ['العهدة', 'المشروع', 'المبلغ', 'الحالة'],
@@ -469,7 +616,11 @@ export function FinanceReportsPage() {
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <RefreshButton onRefresh={load} loading={loading} />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {reports.map((r) => (
         <Card key={r.title}>
           <div className="text-center py-4">
@@ -480,6 +631,7 @@ export function FinanceReportsPage() {
           </div>
         </Card>
       ))}
+      </div>
     </div>
   );
 }
@@ -495,8 +647,11 @@ export function FinanceSuppliersPage() {
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [lineItemsInvoice, setLineItemsInvoice] = useState<Invoice | null>(null);
 
-  const loadSuppliers = () =>
-    dashboardService.financeSuppliers()
+  const [loadingSuppliers, setLoadingSuppliers] = useState(true);
+
+  const loadSuppliers = () => {
+    setLoadingSuppliers(true);
+    return dashboardService.financeSuppliers()
       .then((data) => {
         if (Array.isArray(data)) {
           setSuppliers(data);
@@ -509,7 +664,9 @@ export function FinanceSuppliersPage() {
       .catch(() => {
         setSuppliers([]);
         setGrandTotal(0);
-      });
+      })
+      .finally(() => setLoadingSuppliers(false));
+  };
 
   useEffect(() => {
     loadSuppliers();
@@ -559,6 +716,9 @@ export function FinanceSuppliersPage() {
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <RefreshButton onRefresh={loadSuppliers} loading={loadingSuppliers} />
+      </div>
       <StatsGrid>
         <StatCard icon="🏪" label={t('finance.supplierCount')} value={(suppliers ?? []).length} color="blue" />
         <StatCard icon="🧾" label={t('finance.invoiceCount')} value={(suppliers ?? []).reduce((s, x) => s + (x.count || 0), 0)} color="green" />
@@ -580,14 +740,7 @@ export function FinanceSuppliersPage() {
                 className="border-none outline-none bg-transparent text-sm w-full font-[inherit]"
               />
             </div>
-            <button
-              type="button"
-              onClick={() => { setQuery(''); loadSuppliers(); }}
-              className="w-9 h-9 shrink-0 border border-[#e3e9f2] rounded-lg bg-white text-muted hover:text-brand-500 text-sm"
-              title={t('common.refresh')}
-            >
-              ↺
-            </button>
+            <RefreshButton variant="icon" onRefresh={loadSuppliers} loading={loadingSuppliers} />
           </div>
           <div className="max-h-[520px] overflow-y-auto divide-y divide-[#eef1f6]">
             {filteredSuppliers.length === 0 ? (

@@ -1,14 +1,11 @@
 import type { Custody, Invoice } from '../types';
 
-const PM_UPLOAD_CUSTODY_STATUSES = new Set(['open', 'closed', 'pm_rejected']);
-const PM_SUBMIT_CUSTODY_STATUSES = new Set(['open', 'closed']);
-
-export function canUploadToCustody(status: string) {
-  return PM_UPLOAD_CUSTODY_STATUSES.has(status);
+export function canUploadToCustody(_status: string) {
+  return true;
 }
 
-export function canSubmitCustodyInvoices(status: string) {
-  return PM_SUBMIT_CUSTODY_STATUSES.has(status);
+export function canSubmitCustodyInvoices(_status: string) {
+  return true;
 }
 
 /** Invoice left the PM draft queue and was sent into the approval workflow */
@@ -21,6 +18,48 @@ const POST_PM_CUSTODY_STATUSES = new Set(['pm_approved', 'finance_pending', 'set
 
 export function financeEligibleInvoices(invoices: Invoice[] = []) {
   return invoices.filter((i) => FINANCE_ELIGIBLE_STATUSES.has(i.status));
+}
+
+export function disbursementEligibleInvoices(invoices: Invoice[] = []) {
+  return invoices.filter((i) => i.status === 'finance_approved');
+}
+
+export function disbursementTotal(custody: Custody) {
+  const approved = disbursementEligibleInvoices(custody.invoices);
+  if (approved.length) {
+    return approved.reduce((sum, i) => sum + (i.total || 0), 0);
+  }
+  return custody.disbursementAmount || custody.approvedSpent || 0;
+}
+
+const REJECTED_INVOICE_STATUSES = new Set(['pm_rejected', 'finance_rejected']);
+
+export function isRejectedInvoice(status: string) {
+  return REJECTED_INVOICE_STATUSES.has(status);
+}
+
+/** Derive workflow status from invoices when DB status is stale (e.g. after repair glitch) */
+export function effectiveCustodyStatus(custody: Custody): string {
+  if (custody.settledAt || custody.disbursementProof) return 'settled';
+
+  const invoices = custody.invoices ?? [];
+  const hasPendingPm = invoices.some((i) => i.status === 'pending_pm');
+  const hasPendingFinance = invoices.some((i) => i.status === 'pending_finance');
+  const hasFinanceApproved = invoices.some((i) => i.status === 'finance_approved');
+  const hasSettledInv = invoices.some((i) => i.status === 'settled');
+
+  if (hasFinanceApproved && !hasPendingFinance) return 'finance_pending';
+  if (hasPendingFinance) return 'pm_approved';
+  if (hasSettledInv && !hasPendingPm) return 'settled';
+  if (hasSettledInv && hasPendingPm) return 'settled';
+
+  return custody.status;
+}
+
+export function partitionCustodyInvoices(invoices: Invoice[] = []) {
+  const rejected = invoices.filter((i) => isRejectedInvoice(i.status));
+  const active = invoices.filter((i) => !isRejectedInvoice(i.status));
+  return { active, rejected };
 }
 
 export function custodyTotals(c: Custody) {

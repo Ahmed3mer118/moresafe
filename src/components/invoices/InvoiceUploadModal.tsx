@@ -24,15 +24,6 @@ const EMPTY_INVOICE_FORM = {
 type LineItem = { description: string; quantity: number; unitPrice: number; total: number };
 const EMPTY_LINE: LineItem = { description: '', quantity: 1, unitPrice: 0, total: 0 };
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 export function InvoiceUploadModal({
   open,
   onClose,
@@ -238,7 +229,6 @@ export function InvoiceUploadModal({
       invoiceDate: new Date().toISOString().slice(0, 10),
     });
     setCurrentFromFile(remaining[0]);
-    await scanFileForForm(remaining[0], { silent: true });
   };
 
   const addFiles = (incoming: FileList | File[]) => {
@@ -251,8 +241,6 @@ export function InvoiceUploadModal({
 
     if (wasEmpty && list[0]) {
       setCurrentFromFile(list[0]);
-      if (projectId) runOcr(list[0]);
-      else showToast(t('pa.ocrPickProject'), 'error');
     }
   };
 
@@ -288,21 +276,21 @@ export function InvoiceUploadModal({
     if (!currentFile) return showToast(t('pa.uploadImageRequired'), 'error');
 
     runAction(async () => {
-      const dataUrl = await fileToBase64(currentFile);
-      await invoiceService.create({
-        projectId,
-        custodyId: activeCustodyId,
-        invoiceNumber: form.invoiceNumber || `INV-${Date.now()}`,
-        supplier: form.supplier,
-        category: form.category,
-        invoiceDate: form.invoiceDate,
-        subtotal: form.subtotal || 0,
-        vatAmount: form.vatAmount || 0,
-        total: form.total || (form.subtotal || 0) + (form.vatAmount || 0),
-        taxNumber: form.taxNumber,
-        lineItems,
-        attachments: [{ data: dataUrl, filename: currentFile.name, mimeType: currentFile.type }],
-      });
+      const formData = new FormData();
+      formData.append('projectId', projectId);
+      formData.append('custodyId', activeCustodyId);
+      formData.append('invoiceNumber', form.invoiceNumber || `INV-${Date.now()}`);
+      formData.append('supplier', form.supplier);
+      formData.append('category', form.category);
+      formData.append('invoiceDate', form.invoiceDate);
+      formData.append('subtotal', String(form.subtotal || 0));
+      formData.append('vatAmount', String(form.vatAmount || 0));
+      formData.append('total', String(form.total || (form.subtotal || 0) + (form.vatAmount || 0)));
+      formData.append('taxNumber', form.taxNumber || '');
+      formData.append('lineItems', JSON.stringify(lineItems));
+      formData.append('files', currentFile);
+
+      await invoiceService.upload(formData);
 
       const remaining = fileQueue.slice(1);
 
@@ -431,9 +419,14 @@ export function InvoiceUploadModal({
 
         {currentFile && currentPreview && (
           <div className="rounded-xl border-2 border-brand-200 overflow-hidden bg-[#f7f9fc]">
-            <div className="px-3 py-2 bg-brand-50 border-b border-brand-100 flex justify-between items-center text-xs font-bold text-navy">
+            <div className="px-3 py-2 bg-brand-50 border-b border-brand-100 flex flex-wrap justify-between items-center gap-2 text-xs font-bold text-navy">
               <span>{t('pa.currentImage', { name: currentFile.name })}</span>
-              {queueTotal > 1 && <span>{queuePosition} / {queueTotal}</span>}
+              <div className="flex items-center gap-2">
+                {queueTotal > 1 && <span>{queuePosition} / {queueTotal}</span>}
+                <Button size="sm" variant="ghost" onClick={() => runOcr(currentFile)} disabled={ocrLoading || !projectId}>
+                  {ocrLoading ? t('common.loading') : t('pa.scanInvoice')}
+                </Button>
+              </div>
             </div>
             {currentFile.type === 'application/pdf' ? (
               <div className="p-10 text-center text-muted">📄 {currentFile.name}</div>

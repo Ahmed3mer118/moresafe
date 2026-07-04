@@ -23,6 +23,15 @@ type ProjectInput = Omit<Partial<Project>, 'manager' | 'accountants'> & {
   accountants?: string[];
 };
 
+export interface BudgetSummary {
+  projectCount: number;
+  budget: number;
+  spent: number;
+  remaining: number;
+  overCount: number;
+  nearCount: number;
+}
+
 export class ProjectService {
   list() {
     return apiClient.get<Project[]>('/projects');
@@ -41,7 +50,7 @@ export class ProjectService {
   }
 
   budgets() {
-    return apiClient.get<Project[]>('/projects/budgets');
+    return apiClient.get<{ projects: Project[]; totals: BudgetSummary }>('/projects/budgets');
   }
 }
 
@@ -131,6 +140,10 @@ export class InvoiceService {
 
   create(data: Record<string, unknown> | FormData) {
     return apiClient.post<Invoice>('/invoices', data);
+  }
+
+  upload(data: FormData) {
+    return apiClient.post<Invoice>('/invoices/upload', data);
   }
 
   update(id: string, data: Record<string, unknown>) {

@@ -58,6 +58,7 @@ export interface Invoice {
   attachments?: { filename: string; mimeType: string; url: string }[];
   attachmentUrl?: string;
   uploadedBy?: User;
+  custody?: string | { _id: string; custodyNumber?: string; status?: string };
   createdAt?: string;
 }
 
@@ -103,6 +104,12 @@ export interface CustodyTransaction {
   proofUrl?: string;
   createdAt?: string;
   createdBy?: User;
+  custodyNumber?: string;
+  journalLines?: JournalLine[];
+  accrualEntry?: JournalLine[];
+  disbursementEntry?: JournalLine[];
+  project?: Project | string;
+  holder?: User | string;
 }
 
 export interface JournalLine {

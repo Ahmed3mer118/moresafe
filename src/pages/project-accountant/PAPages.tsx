@@ -12,13 +12,15 @@ import { Modal } from '../../components/ui/Modal';
 import { useUi } from '../../context/UiContext';
 import { useFormDraft } from '../../hooks/useFormDraft';
 import { useTableFilter } from '../../hooks/useTableFilter';
+import { BudgetOverview } from '../../components/budget/BudgetOverview';
 import { dashboardService, custodyService, invoiceService, projectService } from '../../services';
 import type { Custody, Invoice, Project } from '../../types';
 import { formatMoney, projectName, entityId, statusLabel, invoiceManagerName, formatDate } from '../../utils/format';
 import { exportInvoicesFromTable } from '../../utils/exportInvoicesPdf';
 import { showToast } from '../../utils/toast';
-import { canUploadToCustody, isInvoiceSubmittedForApproval } from '../../utils/custodyHelpers';
+import { isInvoiceSubmittedForApproval } from '../../utils/custodyHelpers';
 import { Notice } from '../../components/ui/Notice';
+import { RefreshButton } from '../../components/ui/RefreshButton';
 
 // const PM_BASE = '/dashboard/project-manager';
 
@@ -75,16 +77,33 @@ export function PAHomePage() {
   const lang = i18n.language;
   const dateLocale = lang === 'ar' ? 'ar-SA' : 'en-SA';
   const [data, setData] = useState<Awaited<ReturnType<typeof dashboardService.projectAccountant>> | null>(null);
+  const [budgetData, setBudgetData] = useState<Awaited<ReturnType<typeof projectService.budgets>> | null>(null);
+  const [loading, setLoading] = useState(true);
   const [detailId, setDetailId] = useState<string | null>(null);
 
-  useEffect(() => {
-    dashboardService.projectAccountant().then(setData);
-  }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [d, b] = await Promise.all([
+        dashboardService.projectAccountant(),
+        projectService.budgets(),
+      ]);
+      setData(d);
+      setBudgetData(b);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
 
   const recent = data?.recentInvoices ?? [];
 
   return (
     <div className="space-y-5">
+      <div className="flex justify-end">
+        <RefreshButton onRefresh={load} loading={loading} />
+      </div>
 
       <StatsGrid>
         <StatCard
@@ -116,6 +135,16 @@ export function PAHomePage() {
           trendUp={false}
         />
       </StatsGrid>
+
+      <Card title={`📊 ${t('budget.overviewTitle')}`}>
+        <BudgetOverview
+          projects={budgetData?.projects ?? []}
+          totals={budgetData?.totals}
+          loading={loading}
+          compact
+          showSummary={false}
+        />
+      </Card>
 
       <Card title={`📋 ${t('pa.recentInvoices')}`} noPadding>
         <DataTable
@@ -168,6 +197,8 @@ export function PAHomePage() {
             },
           ]}
           data={recent}
+          loading={loading}
+          onRefresh={load}
           exportFilename="recent-invoices"
           exportTitle={t('pa.recentInvoices')}
           exportRowLabel={lang === 'ar' ? 'فاتورة' : 'invoices'}
@@ -630,8 +661,10 @@ export function PAInvoicesPage() {
       <Card
         title={`📄 ${isCustodyScope ? t('pa.custodyInvoices') : t('pa.invoiceLog')}`}
         action={
-          isCustodyScope && activeCustody && canUploadToCustody(activeCustody.status) ? (
-            <Button size="sm" onClick={openUpload}>⊕ {t('pa.uploadNew')}</Button>
+          isCustodyScope && activeCustody ? (
+            <Button size="sm" onClick={openUpload}>
+              ⊕ {t('pa.uploadNew')}
+            </Button>
           ) : undefined
         }
         noPadding
@@ -941,22 +974,26 @@ export function PAInvoicesPage() {
 
 export function PARejectedPage() {
   const { t, i18n } = useTranslation();
-  const { runAction } = useUi();
+  const navigate = useNavigate();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(true);
   const [detailId, setDetailId] = useState<string | null>(null);
 
-  const load = () => invoiceService.rejected().then(setInvoices);
+  const load = () => {
+    setLoading(true);
+    return invoiceService.rejected().then(setInvoices).finally(() => setLoading(false));
+  };
   useEffect(() => { load(); }, []);
 
-  const resubmit = (id: string, category?: string) => {
-    runAction(async () => {
-      await invoiceService.update(id, { category });
-      await load();
-    }, { success: t('pa.resubmitted') });
+  const goUploadNew = (inv: Invoice) => {
+    const cid = typeof inv.custody === 'string' ? inv.custody : entityId(inv.custody);
+    if (cid) navigate(`/dashboard/project-manager/custody/${cid}`);
+    else showToast(t('pa.selectCustodyFirst'), 'error');
   };
 
   return (
-    <div>
+    <div className="space-y-4">
+      <Notice icon="↻">{t('pa.resubmitNewInvoicesNotice')}</Notice>
       <Card noPadding>
         <DataTable
           columns={[
@@ -971,12 +1008,13 @@ export function PARejectedPage() {
               render: (i) => (
                 <div className="flex gap-1">
                   <Button size="sm" variant="ghost" onClick={() => setDetailId(i._id)}>{t('common.view')}</Button>
-                  <Button size="sm" variant="ghost" onClick={() => resubmit(i._id, i.category)}>{t('pa.resubmit')}</Button>
+                  <Button size="sm" onClick={() => goUploadNew(i)}>{t('pa.uploadNew')}</Button>
                 </div>
               ),
             },
           ]}
           data={invoices}
+          loading={loading}
           exportFilename="rejected-invoices"
           exportTitle={t('nav.rejected')}
           exportRowLabel={i18n.language === 'ar' ? 'فاتورة' : 'invoices'}
@@ -992,12 +1030,23 @@ export function PARejectedPage() {
 export function PANotificationsPage() {
   const { t, i18n } = useTranslation();
   const [data, setData] = useState<{ notifications: { title: string; message: string; type: string; createdAt: string }[] } | null>(null);
-  useEffect(() => { dashboardService.notifications().then(setData); }, []);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setData(await dashboardService.notifications());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
 
   const dateLocale = i18n.language === 'ar' ? 'ar-SA' : 'en-SA';
 
   return (
-    <Card title={`🔔 ${t('nav.notifications')}`}>
+    <Card title={`🔔 ${t('nav.notifications')}`} action={<RefreshButton onRefresh={load} loading={loading} />}>
       <div className="space-y-3">
         {data?.notifications.map((n, i) => (
           <div key={i} className={`p-4 rounded-xl border text-sm ${n.type === 'reject' ? 'border-red-200 bg-red-50' : 'border-[#e3e9f2]'}`}>

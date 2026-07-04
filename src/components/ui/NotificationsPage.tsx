@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from './Card';
 import { Button } from './Button';
+import { RefreshButton } from './RefreshButton';
 import { dashboardService } from '../../services';
 import type { Notification } from '../../types';
 import { useUi } from '../../context/UiContext';
@@ -33,9 +34,12 @@ export function NotificationsPage() {
     <Card
       title={t('nav.notifications')}
       action={
-        items.some((n) => !n.isRead) ? (
-          <Button size="sm" variant="ghost" onClick={markAll}>تعليم الكل كمقروء</Button>
-        ) : undefined
+        <div className="flex items-center gap-2">
+          <RefreshButton onRefresh={load} />
+          {items.some((n) => !n.isRead) ? (
+            <Button size="sm" variant="ghost" onClick={markAll}>تعليم الكل كمقروء</Button>
+          ) : null}
+        </div>
       }
     >
       <div className="space-y-3">

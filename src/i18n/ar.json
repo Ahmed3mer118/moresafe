@@ -211,6 +211,17 @@
       "adjustment": "قيد استحقاق"
     },
     "withinBudget": "متبقي {{remaining}}",
+    "resubmitNewInvoicesNotice": "ارفع فواتير جديدة فقط ثم حدّدها وأرسل للاعتماد — حتى بعد التسوية أو الرفض يمكنك إضافة فواتير جديدة وإرسالها.",
+    "rejectedInvoicesNotice": "الفواتير المرفوضة لا تؤثر على سير العهدة — للمرجعية فقط.",
+    "rejectedInvoicesTitle": "فواتير مرفوضة (أرشيف)",
+    "scanInvoice": "قراءة الفاتورة (OCR)",
+    "viewJournal": "عرض القيد",
+    "accrualEntry": "قيد الاستحقاق",
+    "accrualTag": "قيد استحقاق",
+    "disbursementEntry": "قيد الصرف",
+    "disbursementTag": "قيد صرف",
+    "noJournalEntries": "لا توجد قيود استحقاق أو صرف بعد",
+    "waitingForPaNotice": "{{count}} فاتورة بانتظار اعتماد المحاسب: {{refs}}",
     "custodyFilter": {
       "active": "العهد الجارية",
       "all": "كل العهد"
@@ -283,7 +294,18 @@
     "editCustody": "تعديل العهدة",
     "custodyPurpose": "بيان العهدة",
     "custodyUpdated": "تم تحديث العهدة",
-    "transactions": "المعاملات"
+    "transactions": "المعاملات",
+    "analytics": {
+      "settledCycles": "دورات مكتملة",
+      "totalExpense": "إجمالي المصروف",
+      "avgSettlement": "متوسط التسوية",
+      "nearBudgetAlerts": "تنبيهات الميزانية"
+    },
+    "home": {
+      "activeUsers": "▲ نشط",
+      "awaitingDisbursement": "بانتظار الصرف",
+      "settledCustodies": "عهد مسوّاة"
+    }
   },
   "pm": {
     "subtitle": "محاسب المشروع",
@@ -303,6 +325,15 @@
     "budget": "الميزانية",
     "spent": "المصروف",
     "remaining": "المتبقي",
+    "stats": {
+      "assignedProjects": "مشاريع مُسندة",
+      "pendingCustodies": "عهد بانتظاري",
+      "projectManagers": "مديرو المشاريع",
+      "totalSpent": "إجمالي المصروفات",
+      "active": "نشط",
+      "forReview": "للمراجعة",
+      "custodyStatus": "حالة العهد"
+    },
     "pendingForYou": "بانتظار اعتمادك",
     "working": "يعمل",
     "custodyCount": "{{count}} عهدة",
@@ -322,7 +353,9 @@
     "noArchivedInvoices": "لا توجد فواتير قديمة",
     "approvalsNotice": "حدّد الفواتير بالـ checkbox ثم اعتمد أو ارفض المحدد دفعة واحدة.",
     "custodyApprovalsNotice": "حدّد العهد أو الفواتير بداخلها — ثم اعتمد أو ارفض المحدد (يمكن رفض فاتورة دون رفض العهدة كاملة).",
-    "custodyArchiveNotice": "أرشيف العهد المعالجة — اضغط على أي عهدة لعرض الفواتير بداخلها.",
+    "custodyArchiveNotice": "أرشيف العهد المعتمدة والمرفوضة من محاسب المشروع — اضغط على أي عهدة لعرض الفواتير.",
+    "archiveApproved": "معتمدة",
+    "archiveRejected": "مرفوضة",
     "noArchivedCustodies": "لا توجد عهد في الأرشيف",
     "backToCustodyArchive": "العودة لأرشيف العهد",
     "filterApprovals": "تصفية الفواتير بانتظار الاعتماد",
@@ -365,11 +398,24 @@
     "noEntries": "لا عهد بانتظار التسوية",
     "settledSuccess": "تم تسجيل قيد الاستحقاق",
     "postAccrual": "اعتماد وتسجيل قيد الاستحقاق",
-    "settleRejected": "تم رفض التسوية"
+    "settleRejected": "تم رفض التسوية",
+    "searchCustodyInvoice": "بحث برقم العهدة أو الفاتورة...",
+    "viewInvoiceImage": "عرض الصورة",
+    "custodyBudget": "ميزانية العهدة",
+    "expandCustodyHint": "اضغط على العهدة لعرض الفواتير وصورها",
+    "invoiceDetails": "تفاصيل الفواتير",
+    "stats": {
+      "openCustodies": "عهد مفتوحة",
+      "pendingSettlement": "بانتظار التسوية",
+      "pendingInvoices": "فواتير بانتظار المراجعة",
+      "totalExpense": "إجمالي المصروف",
+      "inProgress": "قيد المتابعة",
+      "afterPmApproval": "بعد اعتماد محاسب العهد"
+    }
   },
   "status": {
     "open": "مفتوحة",
-    "closed": "مغلقة — بانتظار المدير",
+    "closed": "مغلقة — بانتظار محاسب العهد",
     "pm_approved": "معتمدة — بانتظار المالية",
     "pm_rejected": "مرفوضة من المدير",
     "settled": "تمت التسوية",
@@ -384,5 +430,23 @@
     "finance_pending": "بانتظار المالية",
     "draft": "مسودة",
     "finance_approved": "معتمدة من المالية"
+  },
+  "budget": {
+    "totalBudget": "إجمالي الميزانيات",
+    "totalSpent": "إجمالي المصروف",
+    "remaining": "المتبقي",
+    "alerts": "تنبيهات الميزانية",
+    "projects": "مشروع",
+    "spent": "المصروف",
+    "budgetCap": "الميزانية",
+    "overBudget": "تجاوز الميزانية",
+    "nearBudget": "قارب الحد",
+    "withinBudget": "ضمن الميزانية",
+    "noBudgetSet": "بدون ميزانية",
+    "overBudgetShort": "تجاوز",
+    "nearBudgetShort": "قارب",
+    "allClear": "لا تنبيهات",
+    "noProjects": "لا توجد مشاريع في نطاقك",
+    "overviewTitle": "نظرة على الميزانيات"
   }
 }

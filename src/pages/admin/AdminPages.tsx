@@ -11,6 +11,7 @@ import { CyclePipeline, CycleFlow } from '../../components/ui/CycleFlow';
 import { StatusChip, RoleChip, Amount } from '../../components/ui/Chip';
 import { FormField, inputClass, selectClass } from '../../components/ui/FormField';
 import { ProjectBarChart } from '../../components/charts/DashboardCharts';
+import { BudgetOverview } from '../../components/budget/BudgetOverview';
 import { useTableFilter } from '../../hooks/useTableFilter';
 import { usePagination } from '../../hooks/usePagination';
 import { useFormDraft, hasFormDraft } from '../../hooks/useFormDraft';
@@ -21,12 +22,40 @@ import type { User, Project, Custody } from '../../types';
 import { formatMoney, projectName, userName, statusLabel } from '../../utils/format';
 import { NotificationsPage } from '../../components/ui/NotificationsPage';
 import { PageLoader, StatsSkeleton, TimelineSkeleton } from '../../components/ui/PageLoader';
+import { RefreshButton } from '../../components/ui/RefreshButton';
 
 const ACTIVITY_PAGE_SIZE = 15;
+
+function AdminBudgetSection() {
+  const [budgetData, setBudgetData] = useState<Awaited<ReturnType<typeof projectService.budgets>> | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setBudgetData(await projectService.budgets());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  return (
+    <BudgetOverview
+      projects={budgetData?.projects ?? []}
+      totals={budgetData?.totals}
+      loading={loading}
+      compact
+      showSummary={false}
+    />
+  );
+}
 
 export function AdminHomePage() {
   const { t } = useTranslation();
   const [stats, setStats] = useState<{ users: number; projects: number; rolesCount?: number } | null>(null);
+  const [cycleStats, setCycleStats] = useState({ pm: 0, pa: 0, chief: 0, disbursement: 0, settled: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
   const [activityPage, setActivityPage] = useState(1);
   const [activityLoading, setActivityLoading] = useState(true);
@@ -34,38 +63,65 @@ export function AdminHomePage() {
     items: [], total: 0, totalPages: 1,
   });
 
-  useEffect(() => {
+  const loadStats = async () => {
     setStatsLoading(true);
-    dashboardService.admin()
-      .then(setStats)
-      .catch(() => setStats(null))
-      .finally(() => setStatsLoading(false));
-  }, []);
+    try {
+      const [adminStats, cycles] = await Promise.all([
+        dashboardService.admin(),
+        custodyService.cycleStats(),
+      ]);
+      setStats(adminStats);
+      setCycleStats(cycles);
+    } catch {
+      setStats(null);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
 
-  useEffect(() => {
+  const loadActivity = async () => {
     setActivityLoading(true);
-    dashboardService.activityLogs({ page: activityPage, limit: ACTIVITY_PAGE_SIZE })
-      .then((res) => {
-        setActivity({
-          items: res.items ?? [],
-          total: res.total ?? 0,
-          totalPages: res.totalPages ?? 1,
-        });
-      })
-      .catch(() => setActivity({ items: [], total: 0, totalPages: 1 }))
-      .finally(() => setActivityLoading(false));
-  }, [activityPage]);
+    try {
+      const res = await dashboardService.activityLogs({ page: activityPage, limit: ACTIVITY_PAGE_SIZE });
+      setActivity({
+        items: res.items ?? [],
+        total: res.total ?? 0,
+        totalPages: res.totalPages ?? 1,
+      });
+    } catch {
+      setActivity({ items: [], total: 0, totalPages: 1 });
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
+  const loadAll = async () => {
+    await Promise.all([loadStats(), loadActivity()]);
+  };
+
+  useEffect(() => { loadStats(); }, []);
+
+  useEffect(() => { loadActivity(); }, [activityPage]);
 
   return (
     <div className="space-y-5">
+      <div className="flex justify-end">
+        <RefreshButton onRefresh={loadAll} loading={statsLoading || activityLoading} />
+      </div>
       {statsLoading ? (
         <StatsSkeleton />
       ) : (
         <StatsGrid>
-          <StatCard icon="👥" label={t('nav.users')} value={stats?.users ?? '—'} color="blue" trend="▲ نشط" trendUp />
+          <StatCard icon="👥" label={t('nav.users')} value={stats?.users ?? '—'} color="blue" trend={t('admin.home.activeUsers')} trendUp />
           <StatCard icon="🏗" label={t('nav.projects')} value={stats?.projects ?? '—'} color="green" />
+          <StatCard icon="🏦" label={t('admin.home.awaitingDisbursement')} value={cycleStats.disbursement} color="amber" />
+          <StatCard icon="✔" label={t('admin.home.settledCustodies')} value={cycleStats.settled} color="blue" />
         </StatsGrid>
       )}
+
+      <Card title={`📊 ${t('budget.overviewTitle')}`}>
+        <AdminBudgetSection />
+      </Card>
 
       <Card title="آخر العمليات الإدارية" noPadding>
         {activityLoading ? (
@@ -208,7 +264,12 @@ export function AdminUsersPage() {
         <StatCard icon="👔" label="مدرين المشاريع" value={roleCounts.pm} color="amber" />
         <StatCard icon="🏦" label="مديرين المحاسبين" value={roleCounts.fin} color="green" />
       </StatsGrid>
-      <Card title={t('nav.users')} action={<Button size="sm" onClick={openCreate}>＋ {t('common.add')}</Button>} noPadding>
+      <Card title={t('nav.users')} action={
+        <div className="flex items-center gap-2">
+          <RefreshButton onRefresh={load} />
+          <Button size="sm" onClick={openCreate}>＋ {t('common.add')}</Button>
+        </div>
+      } noPadding>
         <DataTable
           columns={[
             {
@@ -242,6 +303,7 @@ export function AdminUsersPage() {
           onQueryChange={tf.setQuery}
           statusFilter={{ value: tf.status, onChange: tf.setStatus, options: ROLE_FILTER_OPTIONS }}
           onReset={tf.reset}
+          onRefresh={load}
           shown={tf.shown}
           total={tf.total}
           exportFilename="users"
@@ -429,7 +491,12 @@ export function AdminProjectsPage() {
 
   return (
     <div className="space-y-4">
-      <Card title={t('nav.projects')} action={<Button size="sm" onClick={openCreate}>＋ مشروع جديد</Button>} noPadding>
+      <Card title={t('nav.projects')} action={
+        <div className="flex items-center gap-2">
+          <RefreshButton onRefresh={load} />
+          <Button size="sm" onClick={openCreate}>＋ مشروع جديد</Button>
+        </div>
+      } noPadding>
         <DataTable
           columns={[
             { key: 'name', header: t('common.project'), exportHeader: t('common.project'), render: (p) => <span className="font-bold">{projectName(p, i18n.language)}</span>, exportValue: (p) => projectName(p, i18n.language) },
@@ -455,6 +522,7 @@ export function AdminProjectsPage() {
             ) },
           ]}
           data={projects}
+          onRefresh={load}
           exportFilename="projects"
           exportTitle={t('nav.projects')}
           exportLang={i18n.language}
@@ -567,16 +635,25 @@ export function AdminCyclePage() {
   const { t, i18n } = useTranslation();
   const [stats, setStats] = useState({ pm: 0, pa: 0, chief: 0, disbursement: 0, settled: 0 });
   const [custodies, setCustodies] = useState<Custody[]>([]);
+  const [loading, setLoading] = useState(true);
   const tf = useTableFilter(custodies, [(c) => c.custodyNumber, (c) => projectName(c.project, i18n.language)], (c) => c.status);
 
-  useEffect(() => {
-    custodyService.cycleStats().then(setStats);
-    custodyService.list().then(setCustodies);
-  }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [s, c] = await Promise.all([custodyService.cycleStats(), custodyService.list()]);
+      setStats(s);
+      setCustodies(c);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
 
   return (
     <div className="space-y-5">
-      <Card><CyclePipeline stats={stats} /></Card>
+      <Card action={<RefreshButton onRefresh={load} loading={loading} />}><CyclePipeline stats={stats} /></Card>
       <Card title="سجل العهد — تفاصيل الدورة" noPadding>
         <DataTable
           columns={[
@@ -587,11 +664,12 @@ export function AdminCyclePage() {
             { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (c) => <StatusChip status={c.status} label={statusLabel(c.status, t)} />, exportValue: (c) => statusLabel(c.status, t) },
           ]}
           data={tf.filtered}
+          loading={loading}
           query={tf.query}
           onQueryChange={tf.setQuery}
           statusFilter={{ value: tf.status, onChange: tf.setStatus, options: CUSTODY_STATUS_OPTIONS }}
           onReset={tf.reset}
-          onRefresh={() => custodyService.list().then(setCustodies)}
+          onRefresh={load}
           shown={tf.shown}
           total={tf.total}
           exportFilename="custody-cycle"
@@ -609,16 +687,23 @@ export function AdminSettingsPage() {
   const { runAction } = useUi();
   const { user } = useAuth();
   const { form: settings, setForm: setSettings, clearDraft } = useFormDraft('admin.settings', SETTINGS_INIT);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
+  const load = async () => {
     if (hasFormDraft('admin.settings', user?.id)) return;
-    dashboardService.settings().then((s) =>
+    setLoading(true);
+    try {
+      const s = await dashboardService.settings();
       setSettings({
         companyName: s.companyName || '',
         taxNumber: s.taxNumber || '',
-      })
-    );
-  }, [user?.id, setSettings]);
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [user?.id, setSettings]);
 
   const save = () =>
     runAction(async () => {
@@ -627,7 +712,7 @@ export function AdminSettingsPage() {
     }, { success: 'تم حفظ الإعدادات' });
 
   return (
-    <Card title={t('nav.settings')}>
+    <Card title={t('nav.settings')} action={<RefreshButton onRefresh={load} loading={loading} />}>
       <div className="grid gap-4 max-w-md">
         <div className="p-4 bg-[#f7f9fc] rounded-xl border space-y-1">
           <span className="text-[11px] text-muted font-bold">مدير النظام</span>
@@ -650,22 +735,26 @@ export function AdminLogsPage() {
     items: [], total: 0, totalPages: 1,
   });
 
-  useEffect(() => {
+  const load = async () => {
     setLogsLoading(true);
-    dashboardService.activityLogs({ page: logsPage, limit: ACTIVITY_PAGE_SIZE })
-      .then((res) => {
-        setLogs({
-          items: res.items ?? [],
-          total: res.total ?? 0,
-          totalPages: res.totalPages ?? 1,
-        });
-      })
-      .catch(() => setLogs({ items: [], total: 0, totalPages: 1 }))
-      .finally(() => setLogsLoading(false));
-  }, [logsPage]);
+    try {
+      const res = await dashboardService.activityLogs({ page: logsPage, limit: ACTIVITY_PAGE_SIZE });
+      setLogs({
+        items: res.items ?? [],
+        total: res.total ?? 0,
+        totalPages: res.totalPages ?? 1,
+      });
+    } catch {
+      setLogs({ items: [], total: 0, totalPages: 1 });
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [logsPage]);
 
   return (
-    <Card title={t('nav.logs')} noPadding>
+    <Card title={t('nav.logs')} action={<RefreshButton onRefresh={load} loading={logsLoading} />} noPadding>
       {logsLoading ? (
         <PageLoader compact />
       ) : (
@@ -695,17 +784,46 @@ export function AdminLogsPage() {
 }
 
 export function AdminAnalyticsPage() {
-  const { t: tr } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  const [data, setData] = useState<Awaited<ReturnType<typeof dashboardService.adminAnalytics>> | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setData(await dashboardService.adminAnalytics());
+    } catch {
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const formatHours = (h: number) => (h ? `${h} ${lang === 'ar' ? 'س' : 'h'}` : '—');
+
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <RefreshButton onRefresh={load} loading={loading} />
+      </div>
       <StatsGrid>
-        <StatCard icon="📊" label="دورات مكتملة" value="—" color="green" />
-        <StatCard icon="💰" label="إجمالي المصروف" value="—" color="blue" />
-        <StatCard icon="⏱" label="متوسط التسوية" value="—" color="amber" />
-        <StatCard icon="⚠" label="تنبيهات" value="—" color="red" />
+        <StatCard icon="📊" label={t('admin.analytics.settledCycles')} value={data?.settledCycles ?? '—'} color="green" />
+        <StatCard icon="💰" label={t('admin.analytics.totalExpense')} value={data ? formatMoney(data.totalExpense, lang) : '—'} color="blue" />
+        <StatCard icon="⏱" label={t('admin.analytics.avgSettlement')} value={data ? formatHours(data.avgSettlementHours) : '—'} color="amber" />
+        <StatCard icon="⚠" label={t('admin.analytics.nearBudgetAlerts')} value={data?.nearBudgetAlerts ?? '—'} color="red" />
       </StatsGrid>
-      <Card title={tr('nav.analytics')}>
-        <ProjectBarChart labels={['ينا', 'فبر', 'مار', 'أبر', 'ماي', 'يون']} data={[40, 55, 48, 70, 62, 80]} />
+      <Card title={t('nav.analytics')} action={<RefreshButton onRefresh={load} loading={loading} />}>
+        {loading ? (
+          <PageLoader compact />
+        ) : (
+          <ProjectBarChart
+            labels={data?.expenseTrend?.labels ?? []}
+            data={data?.expenseTrend?.data ?? []}
+          />
+        )}
       </Card>
     </div>
   );

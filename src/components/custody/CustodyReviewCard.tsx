@@ -205,9 +205,14 @@ export function CustodyReviewCard({
             </div>
             <div className="text-center min-w-[52px]">
               <div className="text-[10px] text-[#94a3b8] font-bold mb-0.5">{t('pm.invoicesLabel')}</div>
-              <span className="font-bold text-navy">{custody.invoices?.length || 0}</span>
+              <span className="font-bold text-navy">
+                {invoiceFilter ? visibleInvoices.length : (custody.invoices?.length || 0)}
+              </span>
             </div>
-            <StatusChip status={custody.status} label={statusLabel(custody.status, t)} />
+            <StatusChip
+              status={pendingInvoices.length ? reviewStatus : custody.status}
+              label={statusLabel(pendingInvoices.length ? reviewStatus : custody.status, t)}
+            />
           </div>
         </div>
       </div>

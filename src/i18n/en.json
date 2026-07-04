@@ -216,6 +216,17 @@
       "adjustment": "Accrual entry"
     },
     "withinBudget": "Remaining {{remaining}}",
+    "resubmitNewInvoicesNotice": "Upload new invoices only, select them, then submit — even after settlement or rejection you can add and send new invoices.",
+    "rejectedInvoicesNotice": "Rejected invoices do not affect the custody workflow — kept for reference only.",
+    "rejectedInvoicesTitle": "Rejected invoices (archive)",
+    "scanInvoice": "Scan invoice (OCR)",
+    "viewJournal": "View journal",
+    "accrualEntry": "Accrual entry",
+    "accrualTag": "Accrual",
+    "disbursementEntry": "Disbursement entry",
+    "disbursementTag": "Disbursement",
+    "noJournalEntries": "No accrual or disbursement entries yet",
+    "waitingForPaNotice": "{{count}} invoice(s) awaiting accountant approval: {{refs}}",
     "custodyFilter": {
       "active": "Active custodies",
       "all": "All custodies"
@@ -288,7 +299,18 @@
     "editCustody": "Edit custody",
     "custodyPurpose": "Custody purpose",
     "custodyUpdated": "Custody updated",
-    "transactions": "Transactions"
+    "transactions": "Transactions",
+    "analytics": {
+      "settledCycles": "Completed cycles",
+      "totalExpense": "Total expense",
+      "avgSettlement": "Avg. settlement time",
+      "nearBudgetAlerts": "Budget alerts"
+    },
+    "home": {
+      "activeUsers": "▲ Active",
+      "awaitingDisbursement": "Awaiting disbursement",
+      "settledCustodies": "Settled custodies"
+    }
   },
   "pm": {
     "subtitle": "Project Accountant",
@@ -308,6 +330,15 @@
     "budget": "Budget",
     "spent": "Spent",
     "remaining": "Remaining",
+    "stats": {
+      "assignedProjects": "Assigned projects",
+      "pendingCustodies": "Custodies awaiting review",
+      "projectManagers": "Project managers",
+      "totalSpent": "Total spent",
+      "active": "Active",
+      "forReview": "For review",
+      "custodyStatus": "Custody status"
+    },
     "pendingForYou": "Awaiting your approval",
     "working": "Active",
     "custodyCount": "{{count}} custodies",
@@ -327,7 +358,9 @@
     "noArchivedInvoices": "No archived invoices",
     "approvalsNotice": "Check invoices, then approve or reject all selected at once.",
     "custodyApprovalsNotice": "Select custodies or individual invoices — then approve or reject (you can reject one invoice without rejecting the whole custody).",
-    "custodyArchiveNotice": "Archive of processed custodies — click any custody to view its invoices.",
+    "custodyArchiveNotice": "Archive of custodies approved or rejected by the project accountant — click any custody to view invoices.",
+    "archiveApproved": "Approved",
+    "archiveRejected": "Rejected",
     "noArchivedCustodies": "No custodies in archive",
     "backToCustodyArchive": "Back to custody archive",
     "filterApprovals": "Filter pending invoices",
@@ -370,11 +403,24 @@
     "noEntries": "No custodies pending settlement",
     "settledSuccess": "Accrual entry posted",
     "postAccrual": "Approve & post accrual entry",
-    "settleRejected": "Settlement rejected"
+    "settleRejected": "Settlement rejected",
+    "searchCustodyInvoice": "Search by custody or invoice number...",
+    "viewInvoiceImage": "View image",
+    "custodyBudget": "Custody budget",
+    "expandCustodyHint": "Click a custody to view invoices and images",
+    "invoiceDetails": "Invoice details",
+    "stats": {
+      "openCustodies": "Open custodies",
+      "pendingSettlement": "Pending settlement",
+      "pendingInvoices": "Invoices pending review",
+      "totalExpense": "Total expense",
+      "inProgress": "In progress",
+      "afterPmApproval": "After PA approval"
+    }
   },
   "status": {
     "open": "Open",
-    "closed": "Closed — Pending PM",
+    "closed": "Closed — awaiting PA review",
     "pm_approved": "Approved — Pending Finance",
     "pm_rejected": "Rejected by PM",
     "settled": "Settled",
@@ -389,5 +435,23 @@
     "finance_pending": "Pending Finance",
     "draft": "Draft",
     "finance_approved": "Finance approved"
+  },
+  "budget": {
+    "totalBudget": "Total budgets",
+    "totalSpent": "Total spent",
+    "remaining": "Remaining",
+    "alerts": "Budget alerts",
+    "projects": "projects",
+    "spent": "Spent",
+    "budgetCap": "Budget",
+    "overBudget": "Over budget",
+    "nearBudget": "Near limit",
+    "withinBudget": "Within budget",
+    "noBudgetSet": "No budget set",
+    "overBudgetShort": "over",
+    "nearBudgetShort": "near",
+    "allClear": "All clear",
+    "noProjects": "No projects in your scope",
+    "overviewTitle": "Budget overview"
   }
 }

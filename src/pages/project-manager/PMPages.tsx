@@ -22,16 +22,16 @@ import { showToast } from '../../utils/toast';
 import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { RejectReasonModal } from '../../components/ui/RejectReasonModal';
 import { PageLoader } from '../../components/ui/PageLoader';
+import { RefreshButton } from '../../components/ui/RefreshButton';
 import { CustodyReviewCard } from '../../components/custody/CustodyReviewCard';
 import { displayInvoicesTotal } from '../../utils/custodyHelpers';
+import { BudgetOverview } from '../../components/budget/BudgetOverview';
+import { summarizeProjects } from '../../utils/budgetHelpers';
 
-const ARCHIVED_CUSTODY_STATUSES = new Set([
-  'pm_approved',
-  'finance_pending',
-  'settled',
-  'pm_rejected',
-  'finance_rejected',
-]);
+const PA_ARCHIVE_OUTCOME_STATUSES = {
+  approved: ['pm_approved', 'finance_pending', 'settled'],
+  rejected: ['pm_rejected', 'finance_rejected'],
+} as const;
 
 function invoiceColumns(
   t: TFunction,
@@ -148,31 +148,54 @@ function invoiceApprovalColumns(
 }
 
 export function PMHomePage() {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
   const [data, setData] = useState<Awaited<ReturnType<typeof dashboardService.projectManager>> | null>(null);
   const [pending, setPending] = useState<Custody[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    dashboardService.projectManager().then(setData);
-    custodyService.list({ status: 'closed' }).then(setPending);
-  }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [d, p] = await Promise.all([
+        dashboardService.projectManager(),
+        custodyService.list({ status: 'closed' }),
+      ]);
+      setData(d);
+      setPending(p);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const chartLabels = data?.projectList?.map((p) => projectName(p, 'ar')) || ['—'];
-  const chartData = data?.projectList?.map((p) => p.spent) || [0];
+  useEffect(() => { load(); }, []);
+
   const team = chartOrFallback(data?.custodyChart);
+  const projectList = data?.projectList ?? [];
+  const budgetTotals = summarizeProjects(projectList);
 
   return (
     <div className="space-y-5">
-      <StatsGrid>
-        <StatCard icon="🏗" label="مشاريع مُسندة إليّ" value={data?.projects ?? 0} color="blue" trend="▲ نشط" trendUp />
-        <StatCard icon="📦" label="عهد بانتظاري" value={data?.pendingCustodies ?? 0} color="amber" trend="للمراجعة" trendUp={false} />
-        <StatCard icon="👷" label="مديرين مشاريع" value={data?.engineers ?? 0} color="green" />
-        <StatCard icon="💰" label="إجمالي المصروفات" value={formatMoney(data?.totalSpent ?? 0)} color="red" trend="ريال" />
-      </StatsGrid>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card title="مصروفات المشاريع" className="lg:col-span-2"><ProjectBarChart labels={chartLabels} data={chartData} /></Card>
-        <Card title="حالة العهد"><StatusDoughnutChart labels={team.labels} data={team.data} /></Card>
+      <div className="flex justify-end">
+        <RefreshButton onRefresh={load} loading={loading} />
       </div>
+      <StatsGrid>
+        <StatCard icon="🏗" label={t('pm.stats.assignedProjects')} value={data?.projects ?? 0} color="blue" trend={t('pm.stats.active')} trendUp />
+        <StatCard icon="📦" label={t('pm.stats.pendingCustodies')} value={data?.pendingCustodies ?? 0} color="amber" trend={t('pm.stats.forReview')} trendUp={false} />
+        <StatCard icon="👷" label={t('pm.stats.projectManagers')} value={data?.engineers ?? 0} color="green" />
+        <StatCard icon="💰" label={t('pm.stats.totalSpent')} value={formatMoney(data?.totalSpent ?? 0, lang)} color="red" trend={t('common.sar')} />
+      </StatsGrid>
+
+      <Card title={`📊 ${t('budget.overviewTitle')}`}>
+        <BudgetOverview
+          projects={projectList}
+          totals={budgetTotals}
+          loading={loading}
+          compact
+        />
+      </Card>
+
+      <Card title={t('pm.stats.custodyStatus')}><StatusDoughnutChart labels={team.labels} data={team.data} /></Card>
       {pending.length > 0 && (
         <Card title="عهد مغلقة بانتظار مراجعتي" action={<Button size="sm" variant="ghost" onClick={() => window.location.href = '/dashboard/project-accountant/approvals'}>عرض الكل ←</Button>}>
           <div className="space-y-2">
@@ -200,6 +223,7 @@ export function PMApprovalsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => { projectService.list().then(setProjects); }, []);
 
@@ -207,13 +231,14 @@ export function PMApprovalsPage() {
     const params: Record<string, string> = { status: 'pending_pm' };
     if (projectId) params.projectId = projectId;
     if (managerId) params.managerId = managerId;
+    setLoading(true);
     return invoiceService.list(params).then((list) => {
       setInvoices(list);
       setSelectedIds((prev) => {
         const valid = new Set(list.map((i) => i._id));
         return new Set([...prev].filter((id) => valid.has(id)));
       });
-    });
+    }).finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, [projectId, managerId]);
@@ -325,6 +350,7 @@ export function PMApprovalsPage() {
         <DataTable
           columns={columns}
           data={tf.filtered}
+          loading={loading}
           query={tf.query}
           onQueryChange={tf.setQuery}
           searchPlaceholder={t('common.search')}
@@ -367,6 +393,7 @@ export function PMInvoiceArchivePage() {
   const [projectId, setProjectId] = useState('');
   const [managerId, setManagerId] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => { projectService.list().then(setProjects); }, []);
 
@@ -374,7 +401,8 @@ export function PMInvoiceArchivePage() {
     const params: Record<string, string> = { archived: 'true' };
     if (projectId) params.projectId = projectId;
     if (managerId) params.managerId = managerId;
-    return invoiceService.list(params).then(setInvoices);
+    setLoading(true);
+    return invoiceService.list(params).then(setInvoices).finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, [projectId, managerId]);
@@ -443,6 +471,7 @@ export function PMInvoiceArchivePage() {
         <DataTable
           columns={columns}
           data={tf.filtered}
+          loading={loading}
           query={tf.query}
           onQueryChange={tf.setQuery}
           searchPlaceholder={t('common.search')}
@@ -488,10 +517,8 @@ export function PMCustodyApprovalsPage() {
     if (selected) params.holderId = selected;
     setLoading(true);
     return custodyService.list(params).then((all) => {
-      const list = all.filter(
-        (c) =>
-          c.status === 'closed' ||
-          (c.invoices ?? []).some((i) => i.status === 'pending_pm'),
+      const list = all.filter((c) =>
+        (c.invoices ?? []).some((i) => i.status === 'pending_pm'),
       );
       setCustodies(list);
       setSelectedInvoiceIds((prev) => {
@@ -560,8 +587,9 @@ export function PMCustodyApprovalsPage() {
       <Notice icon="✔">{t('pm.custodyApprovalsNotice')}</Notice>
 
       <Card className="!p-0 overflow-hidden">
-        <div className="px-4 py-3.5 border-b border-[#e8edf4] bg-gradient-to-r from-[#f8fafc] to-white">
+        <div className="px-4 py-3.5 border-b border-[#e8edf4] bg-gradient-to-r from-[#f8fafc] to-white flex flex-wrap items-center justify-between gap-2">
           <span className="text-sm font-extrabold text-navy">{t('pm.filterCustody')}</span>
+          <RefreshButton onRefresh={load} loading={loading} />
         </div>
         <div className="p-4 flex flex-wrap gap-3 items-end">
           <FormField label={t('common.project')} className="min-w-[220px] flex-1">
@@ -592,7 +620,8 @@ export function PMCustodyApprovalsPage() {
           <span className="text-[11px] text-muted font-bold">
             {t('pm.selectedCount', { count: selectedInvoiceIds.size })}
           </span>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <RefreshButton onRefresh={load} loading={loading} />
             <Button size="sm" disabled={!selectedInvoiceIds.size} onClick={() => batchReview(true)}>
               {t('pm.approveSelected')}
             </Button>
@@ -619,6 +648,7 @@ export function PMCustodyApprovalsPage() {
             onToggleCustody={toggleCustody}
             onToggleInvoice={toggleInvoice}
             reviewStatus="pending_pm"
+            invoiceFilter={(i) => i.status === 'pending_pm'}
           />
         ))
       )}
@@ -638,17 +668,16 @@ export function PMCustodyArchivePage() {
   const [loading, setLoading] = useState(true);
   const [projectId, setProjectId] = useState('');
   const [managerId, setManagerId] = useState('');
+  const [outcomeFilter, setOutcomeFilter] = useState<'all' | 'approved' | 'rejected'>('all');
 
   useEffect(() => { projectService.list().then(setProjects); }, []);
 
   const load = () => {
-    const params: Record<string, string> = {};
+    const params: Record<string, string> = { archived: 'true' };
     if (projectId) params.projectId = projectId;
     if (managerId) params.holderId = managerId;
     setLoading(true);
-    return custodyService.list(params).then((all) =>
-      setCustodies(all.filter((c) => ARCHIVED_CUSTODY_STATUSES.has(c.status))),
-    ).finally(() => setLoading(false));
+    return custodyService.list(params).then(setCustodies).finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, [projectId, managerId]);
@@ -658,8 +687,14 @@ export function PMCustodyArchivePage() {
     [projects, projectId, lang],
   );
 
+  const outcomeFiltered = useMemo(() => {
+    if (outcomeFilter === 'all') return custodies;
+    const allowed = PA_ARCHIVE_OUTCOME_STATUSES[outcomeFilter];
+    return custodies.filter((c) => (allowed as readonly string[]).includes(c.status));
+  }, [custodies, outcomeFilter]);
+
   const tf = useTableFilter(
-    custodies,
+    outcomeFiltered,
     [
       (c) => c.custodyNumber,
       (c) => projectName(c.project, lang),
@@ -695,6 +730,13 @@ export function PMCustodyArchivePage() {
               {managers.map((h) => (
                 <option key={entityId(h)} value={entityId(h)}>{userName(h, lang)}</option>
               ))}
+            </select>
+          </FormField>
+          <FormField label={t('common.status')} className="min-w-[180px]">
+            <select className={selectClass} value={outcomeFilter} onChange={(e) => setOutcomeFilter(e.target.value as typeof outcomeFilter)}>
+              <option value="all">{t('common.all')}</option>
+              <option value="approved">{t('pm.archiveApproved')}</option>
+              <option value="rejected">{t('pm.archiveRejected')}</option>
             </select>
           </FormField>
         </div>
@@ -784,11 +826,17 @@ export function PMCustodyArchiveDetailPage() {
   const [loading, setLoading] = useState(true);
   const [detailId, setDetailId] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = async () => {
     if (!custodyId) return;
     setLoading(true);
-    custodyService.get(custodyId).then(setCustody).finally(() => setLoading(false));
-  }, [custodyId]);
+    try {
+      setCustody(await custodyService.get(custodyId));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [custodyId]);
 
   if (loading) {
     return <Card><PageLoader compact /></Card>;
@@ -800,9 +848,12 @@ export function PMCustodyArchiveDetailPage() {
 
   return (
     <div className="space-y-4">
-      <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard/project-accountant/custody-archive')}>
-        ← {t('pm.backToCustodyArchive')}
-      </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard/project-accountant/custody-archive')}>
+          ← {t('pm.backToCustodyArchive')}
+        </Button>
+        <RefreshButton onRefresh={load} loading={loading} />
+      </div>
 
       <CustodyReviewCard
         custody={custody}
@@ -824,6 +875,13 @@ export function PMProjectsPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
 
   useEffect(() => { projectService.list().then(setProjects); }, []);
+
+  const loadAll = async () => {
+    await Promise.all([
+      projectService.list().then(setProjects),
+      loadCustodies(),
+    ]);
+  };
 
   const loadCustodies = () => {
     if (!selectedProjectId) {
@@ -855,7 +913,10 @@ export function PMProjectsPage() {
 
   return (
     <div className="space-y-4">
-      <Notice icon="🏗">{t('pm.projectsNotice')}</Notice>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Notice icon="🏗">{t('pm.projectsNotice')}</Notice>
+        <RefreshButton onRefresh={loadAll} />
+      </div>
 
       <Card>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -942,6 +1003,7 @@ export function PMProjectsPage() {
             { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (p) => <StatusChip status={p.status} label={statusLabel(p.status, t)} />, exportValue: (p) => statusLabel(p.status, t) },
           ]}
           data={projects}
+          onRefresh={loadAll}
           exportFilename="project-summary"
           exportTitle={t('pm.projectSummary')}
           exportLang={i18n.language}
@@ -961,19 +1023,27 @@ export function PMEngineersPage() {
   const [projectId, setProjectId] = useState('');
   const [users, setUsers] = useState<User[]>([]);
   const [custodies, setCustodies] = useState<Custody[]>([]);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => { projectService.list().then(setProjects); }, []);
 
-  useEffect(() => {
-    const params: Record<string, string> = { role: 'project_manager' };
-    if (projectId) params.projectId = projectId;
-    userService.list(params).then(setUsers);
-    if (projectId) {
-      custodyService.list({ projectId }).then(setCustodies);
-    } else {
-      custodyService.list().then(setCustodies);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params: Record<string, string> = { role: 'project_manager' };
+      if (projectId) params.projectId = projectId;
+      const [u, c] = await Promise.all([
+        userService.list(params),
+        projectId ? custodyService.list({ projectId }) : custodyService.list(),
+      ]);
+      setUsers(u);
+      setCustodies(c);
+    } finally {
+      setLoading(false);
     }
-  }, [projectId]);
+  };
+
+  useEffect(() => { load(); }, [projectId]);
 
   const rows = users.map((u) => {
     const uid = entityId(u);
@@ -985,14 +1055,17 @@ export function PMEngineersPage() {
   return (
     <div className="space-y-4">
       <Card>
-        <FormField label={t('common.project')} className="max-w-md">
-          <select className={selectClass} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">{t('pm.allManagers')}</option>
-            {projects.map((p) => (
-              <option key={entityId(p)} value={entityId(p)}>{projectName(p, i18n.language)}</option>
-            ))}
-          </select>
-        </FormField>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <FormField label={t('common.project')} className="max-w-md flex-1">
+            <select className={selectClass} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              <option value="">{t('pm.allManagers')}</option>
+              {projects.map((p) => (
+                <option key={entityId(p)} value={entityId(p)}>{projectName(p, i18n.language)}</option>
+              ))}
+            </select>
+          </FormField>
+          <RefreshButton onRefresh={load} loading={loading} />
+        </div>
       </Card>
       <Card noPadding>
         <DataTable
@@ -1029,6 +1102,8 @@ export function PMEngineersPage() {
             },
           ]}
           data={rows}
+          loading={loading}
+          onRefresh={load}
           exportFilename="project-managers"
           exportTitle={t('nav.engineers')}
           exportLang={i18n.language}
@@ -1047,12 +1122,24 @@ export function PMEmergencyPage() {
   const { runAction } = useUi();
   const [projects, setProjects] = useState<Project[]>([]);
   const [accountants, setAccountants] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
   const { form, setForm, clearDraft } = useFormDraft('pm.emergency', EMPTY_EMERGENCY_FORM);
 
-  useEffect(() => {
-    projectService.list().then(setProjects);
-    userService.list({ role: 'project_manager' }).then(setAccountants);
-  }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [p, a] = await Promise.all([
+        projectService.list(),
+        userService.list({ role: 'project_manager' }),
+      ]);
+      setProjects(p);
+      setAccountants(a);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
 
   const submit = () =>
     runAction(async () => {
@@ -1067,7 +1154,7 @@ export function PMEmergencyPage() {
     }, { success: 'تم إرسال الطلب الطارئ' });
 
   return (
-    <Card title={t('nav.emergency')}>
+    <Card title={t('nav.emergency')} action={<RefreshButton onRefresh={load} loading={loading} />}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
         <FormField label={t('common.project')}>
           <select className={selectClass} value={form.projectId} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
@@ -1099,14 +1186,27 @@ export function PMEmergencyPage() {
 export function PMReportsPage() {
   const { t } = useTranslation();
   const [data, setData] = useState<Awaited<ReturnType<typeof dashboardService.projectManager>> | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => { dashboardService.projectManager().then(setData); }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      setData(await dashboardService.projectManager());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
 
   const r = data?.reports;
   const trend = chartOrFallback(r?.expenseTrend);
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end">
+        <RefreshButton onRefresh={load} loading={loading} />
+      </div>
       <StatsGrid>
         <StatCard icon="⏱" label="متوسط زمن الموافقة" value={r ? formatHours(r.avgApprovalHours) : '—'} color="green" trend="من إغلاق العهدة" trendUp />
         <StatCard icon="📈" label="الالتزام بالميزانية" value={r ? `${r.budgetCompliance}%` : '—'} color="blue" trendUp />
@@ -1123,10 +1223,21 @@ export function PMReportsPage() {
 export function PMNotificationsPage() {
   const { t } = useTranslation();
   const [data, setData] = useState<{ notifications: { title: string; message: string; type: string; createdAt: string; isRead: boolean }[] } | null>(null);
-  useEffect(() => { dashboardService.notifications().then(setData); }, []);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setData(await dashboardService.notifications());
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
 
   return (
-    <Card title={t('nav.notifications')}>
+    <Card title={t('nav.notifications')} action={<RefreshButton onRefresh={load} loading={loading} />}>
       <div className="space-y-3">
         {data?.notifications.map((n, i) => (
           <div key={i} className={`p-4 rounded-xl border text-sm ${n.type === 'reject' ? 'bg-red-50 border-red-200' : 'bg-[#f7f9fc] border-[#e3e9f2]'} ${!n.isRead ? 'border-s-2 border-s-red-400' : ''}`}>

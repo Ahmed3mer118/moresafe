@@ -14,11 +14,13 @@ import { ImageLightbox } from '../../components/ui/ImageLightbox';
 import { useUi } from '../../context/UiContext';
 import { custodyService, projectService, dashboardService, userService } from '../../services';
 import { CustodyArchiveCard, JournalTable } from '../../components/ui/JournalBlock';
+import { JournalTransactionsList } from '../../components/custody/JournalTransactionsList';
 import type { Custody, CustodyTransaction, Project, User, Voucher } from '../../types';
 import { formatMoney, projectName, statusLabel, formatDate, entityId, userName } from '../../utils/format';
-import { custodyTotals, proofPayloadFromFile, displayInvoicesTotal } from '../../utils/custodyHelpers';
+import { custodyTotals, proofPayloadFromFile, displayInvoicesTotal, disbursementTotal } from '../../utils/custodyHelpers';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
 import { Notice } from '../../components/ui/Notice';
+import { RefreshButton } from '../../components/ui/RefreshButton';
 import { showToast } from '../../utils/toast';
 
 const ADMIN_BASE = '/dashboard/admin/disbursement';
@@ -231,13 +233,19 @@ export function AdminDisbursementPage() {
     <div className="space-y-4">
       <Notice icon="🏦">{t('admin.disbursementNotice')}</Notice>
 
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant={tab === 'custodies' ? 'primary' : 'ghost'} onClick={() => setTab('custodies')}>
-          🏦 {t('admin.allCustodies')}
-        </Button>
-        <Button size="sm" variant={tab === 'transactions' ? 'primary' : 'ghost'} onClick={() => setTab('transactions')}>
-          📒 {t('admin.transactions')}
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant={tab === 'custodies' ? 'primary' : 'ghost'} onClick={() => setTab('custodies')}>
+            🏦 {t('admin.allCustodies')}
+          </Button>
+          <Button size="sm" variant={tab === 'transactions' ? 'primary' : 'ghost'} onClick={() => setTab('transactions')}>
+            📒 {t('admin.transactions')}
+          </Button>
+        </div>
+        <RefreshButton
+          onRefresh={() => (tab === 'transactions' ? loadTransactions() : load())}
+          loading={tab === 'transactions' ? txLoading : loading}
+        />
       </div>
 
       {tab === 'custodies' ? (
@@ -275,62 +283,13 @@ export function AdminDisbursementPage() {
         />
       </Card>
       ) : (
-      <Card title={`📒 ${t('admin.transactions')}`} noPadding>
-        <DataTable
-          columns={[
-            {
-              key: 'date',
-              header: t('common.date'),
-              render: (tx) => formatDate(tx.createdAt, lang),
-              exportValue: (tx) => formatDate(tx.createdAt, lang),
-            },
-            {
-              key: 'custody',
-              header: t('nav.myCustody'),
-              render: (tx) => <b className="text-brand-600">{tx.custodyNumber || '—'}</b>,
-              exportValue: (tx) => tx.custodyNumber || '',
-            },
-            {
-              key: 'proj',
-              header: t('common.project'),
-              render: (tx) => projectName(tx.project, lang),
-              exportValue: (tx) => projectName(tx.project, lang),
-            },
-            {
-              key: 'mgr',
-              header: t('pm.projectManager'),
-              render: (tx) => userName(tx.holder, lang),
-              exportValue: (tx) => userName(tx.holder, lang),
-            },
-            {
-              key: 'type',
-              header: t('pa.transactionType'),
-              render: (tx) => t(`pa.tx.${tx.type}`, { defaultValue: tx.type }),
-              exportValue: (tx) => tx.type,
-            },
-            {
-              key: 'amt',
-              header: t('common.amount'),
-              render: (tx) => <Amount>{formatMoney(tx.amount, lang)}</Amount>,
-              exportValue: (tx) => String(tx.amount),
-            },
-            {
-              key: 'proof',
-              header: t('admin.paymentProof'),
-              exportable: false,
-              render: (tx) => tx.proofUrl ? (
-                <Button size="sm" variant="ghost" onClick={() => setLightboxUrl(tx.proofUrl!)}>{t('common.view')}</Button>
-              ) : '—',
-            },
-          ]}
-          data={transactions}
-          loading={txLoading}
-          onRefresh={loadTransactions}
-          exportFilename="admin-transactions"
-          exportTitle={t('admin.transactions')}
-          emptyText={t('common.noData')}
-        />
-      </Card>
+      <JournalTransactionsList
+        rows={transactions}
+        loading={txLoading}
+        onRefresh={loadTransactions}
+        showProject
+        showManager
+      />
       )}
 
       <Modal
@@ -532,9 +491,12 @@ export function AdminCustodyDetailPage() {
 
   return (
     <div className="space-y-4">
-      <Button variant="ghost" size="sm" onClick={() => navigate(ADMIN_BASE)}>
-        ← {t('admin.backToDisbursement')}
-      </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button variant="ghost" size="sm" onClick={() => navigate(ADMIN_BASE)}>
+          ← {t('admin.backToDisbursement')}
+        </Button>
+        <RefreshButton onRefresh={load} loading={loading} />
+      </div>
 
       <Card className="!p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-[#e8edf4] bg-gradient-to-r from-brand-50/50 to-white">
@@ -642,7 +604,8 @@ export function AdminCustodyDetailPage() {
             },
           ]}
           data={invoices}
-          loading={false}
+          loading={loading}
+          onRefresh={load}
           emptyText={t('pa.noInvoicesInCustody')}
         />
       </Card>
@@ -806,10 +769,10 @@ export function AdminVouchersPage() {
     try {
       const [v, queue] = await Promise.all([
         dashboardService.vouchers(),
-        custodyService.list(),
+        custodyService.disbursementQueue(),
       ]);
       setVouchers(v);
-      setPending(queue.filter((c) => c.status === 'finance_pending'));
+      setPending(queue);
     } catch {
       showToast(t('common.noData'), 'error');
       setVouchers([]);
@@ -823,7 +786,8 @@ export function AdminVouchersPage() {
 
   const registerDisbursement = (custody: Custody) => {
     const proofFile = proofFiles[custody._id];
-    const amt = amounts[custody._id] ? Number(amounts[custody._id]) : custody.spent || 0;
+    const defaultAmt = disbursementTotal(custody);
+    const amt = amounts[custody._id] ? Number(amounts[custody._id]) : defaultAmt;
     if (!amt || amt <= 0) return showToast(t('admin.disburseAmountRequired'), 'error');
     if (!proofFile) return showToast(t('admin.proofRequired'), 'error');
     runAction(async () => {
@@ -846,7 +810,10 @@ export function AdminVouchersPage() {
 
   return (
     <div className="space-y-4">
-      <Notice icon="🧾">{t('admin.vouchersNotice')}</Notice>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Notice icon="🧾">{t('admin.vouchersNotice')}</Notice>
+        <RefreshButton onRefresh={load} loading={loading} />
+      </div>
 
       <Card title={`⏳ ${t('admin.pendingDisbursement')}`}>
         {loading ? (
@@ -864,14 +831,14 @@ export function AdminVouchersPage() {
                       {userName(c.holder, lang)} · {projectName(c.project, lang)}
                     </div>
                   </div>
-                  <Amount>{formatMoney(c.disbursementAmount || 0, lang)}</Amount>
+                  <Amount>{formatMoney(disbursementTotal(c), lang)}</Amount>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                   <FormField label={t('admin.disburseAmountLabel')}>
                     <input
                       className={inputClass}
                       type="number"
-                      placeholder={formatMoney(c.spent || 0, lang)}
+                      placeholder={formatMoney(disbursementTotal(c), lang)}
                       value={amounts[c._id] || ''}
                       onChange={(e) => setAmounts((prev) => ({ ...prev, [c._id]: e.target.value }))}
                     />

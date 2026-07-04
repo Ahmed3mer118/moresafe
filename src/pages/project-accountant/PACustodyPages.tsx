@@ -10,11 +10,14 @@ import { Notice } from '../../components/ui/Notice';
 import { PageLoader } from '../../components/ui/PageLoader';
 import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { InvoiceUploadModal } from '../../components/invoices/InvoiceUploadModal';
+import { JournalTransactionsList } from '../../components/custody/JournalTransactionsList';
+import { CycleFlow } from '../../components/ui/CycleFlow';
+import { RefreshButton } from '../../components/ui/RefreshButton';
 import { useUi } from '../../context/UiContext';
 import { custodyService } from '../../services';
 import type { Custody, CustodyTransaction, Invoice } from '../../types';
 import { formatMoney, projectName, statusLabel, formatDate, userName, entityId } from '../../utils/format';
-import { custodyTotals, canUploadToCustody, canSubmitCustodyInvoices, isInvoiceSubmittedForApproval } from '../../utils/custodyHelpers';
+import { custodyTotals, isInvoiceSubmittedForApproval, effectiveCustodyStatus, partitionCustodyInvoices, displayInvoicesTotal } from '../../utils/custodyHelpers';
 import { showToast } from '../../utils/toast';
 
 const PM_BASE = '/dashboard/project-manager';
@@ -61,7 +64,9 @@ export function PACustodyListPage() {
 
   const rows = useMemo(() => {
     if (filter === 'active') {
-      return custodies.filter((c) => c.status === 'open' || c.status === 'closed' || c.status === 'pm_approved' || c.status === 'finance_pending');
+      return custodies.filter((c) =>
+        ['open', 'closed', 'pm_approved', 'finance_pending', 'pm_rejected', 'finance_rejected', 'settled'].includes(c.status),
+      );
     }
     return custodies;
   }, [custodies, filter]);
@@ -191,8 +196,17 @@ export function PACustodyDetailPage() {
   useEffect(() => { load(); }, [custodyId]);
 
   const allInvoices = custody?.invoices ?? [];
+  const { active: activeInvoices, rejected: rejectedInvoices } = useMemo(
+    () => partitionCustodyInvoices(allInvoices),
+    [allInvoices],
+  );
+  const workflowStatus = custody ? effectiveCustodyStatus(custody) : 'open';
   const accumulatedInvoices = useMemo(
     () => allInvoices.filter((i) => i.status === 'accumulated'),
+    [allInvoices],
+  );
+  const pendingPmInvoices = useMemo(
+    () => allInvoices.filter((i) => i.status === 'pending_pm'),
     [allInvoices],
   );
   const selectedTotal = useMemo(
@@ -219,15 +233,107 @@ export function PACustodyDetailPage() {
     });
   };
 
+  const selectableIds = useMemo(
+    () => accumulatedInvoices.map((i) => i._id),
+    [accumulatedInvoices],
+  );
+  const canSubmit = selectableIds.length > 0;
+  const showResubmitNotice = ['pm_rejected', 'finance_rejected', 'settled'].includes(workflowStatus);
+
+  const invoiceColumns = useMemo(
+    () => [
+      ...(canSubmit
+        ? [{
+            key: 'sel',
+            header: (
+              <input
+                type="checkbox"
+                className="w-4 h-4 accent-brand-600"
+                checked={selectableIds.length > 0 && selectableIds.every((id) => selected.has(id))}
+                onChange={(e) => toggleAll(selectableIds, e.target.checked)}
+              />
+            ),
+            exportable: false,
+            className: 'w-10',
+            render: (inv: Invoice) =>
+              inv.status === 'accumulated' ? (
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 accent-brand-600"
+                  checked={selected.has(inv._id)}
+                  onChange={() => toggle(inv._id)}
+                />
+              ) : null,
+          }]
+        : []),
+      {
+        key: 'n',
+        header: t('pa.rowNumber'),
+        render: (inv: Invoice) => (
+          <span className="inline-flex items-center gap-1.5">
+            {isInvoiceSubmittedForApproval(inv.status) && (
+              <span
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-black shrink-0"
+                title={t('pa.invoiceSubmitted')}
+              >
+                ✓
+              </span>
+            )}
+            <span className="font-bold text-brand-600">{inv.referenceNumber}</span>
+          </span>
+        ),
+        exportValue: (inv: Invoice) => inv.referenceNumber,
+      },
+      {
+        key: 'sup',
+        header: t('pa.supplier'),
+        render: (i: Invoice) => i.supplier || '—',
+        exportValue: (i: Invoice) => i.supplier || '',
+      },
+      {
+        key: 'amt',
+        header: t('pa.invoiceTotal'),
+        render: (i: Invoice) => <ColoredAmount value={i.total} lang={lang} />,
+        exportValue: (i: Invoice) => String(i.total),
+      },
+      {
+        key: 'date',
+        header: t('common.date'),
+        render: (i: Invoice) => (i.invoiceDate ? new Date(i.invoiceDate).toLocaleDateString(dateLocale) : '—'),
+        exportValue: (i: Invoice) => formatDate(i.invoiceDate, lang),
+      },
+      {
+        key: 'st',
+        header: t('common.status'),
+        render: (i: Invoice) => <StatusChip status={i.status} label={statusLabel(i.status, t)} />,
+        exportValue: (i: Invoice) => statusLabel(i.status, t),
+      },
+      {
+        key: 'act',
+        header: '',
+        exportable: false,
+        render: (i: Invoice) => (
+          <Button size="sm" variant="ghost" onClick={() => setDetailId(i._id)}>
+            {t('common.view')}
+          </Button>
+        ),
+      },
+    ],
+    [canSubmit, selectableIds, selected, t, lang, dateLocale],
+  );
+
   const submitForApproval = () => {
-    if (!custody || !selected.size) {
+    if (!custody) return;
+    const accumulatedIds = new Set(accumulatedInvoices.map((i) => i._id));
+    const toSubmit = [...selected].filter((id) => accumulatedIds.has(id));
+    if (!toSubmit.length) {
       showToast(t('pa.selectInvoicesFirst'), 'error');
       return;
     }
     runAction(async () => {
       setSubmitting(true);
       try {
-        await custodyService.close(custody._id, [...selected]);
+        await custodyService.close(custody._id, toSubmit);
         await load();
       } finally {
         setSubmitting(false);
@@ -243,15 +349,14 @@ export function PACustodyDetailPage() {
     return <Card><p className="text-center text-muted py-8">{t('common.noData')}</p></Card>;
   }
 
-  const selectableIds = accumulatedInvoices.map((i) => i._id);
-  const canUpload = canUploadToCustody(custody.status);
-  const canSubmit = canSubmitCustodyInvoices(custody.status) && selectableIds.length > 0;
-
   return (
     <div className="space-y-4">
-      <Button variant="ghost" size="sm" onClick={() => navigate(`${PM_BASE}/custody`)}>
-        ← {t('pa.backToCustodies')}
-      </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button variant="ghost" size="sm" onClick={() => navigate(`${PM_BASE}/custody`)}>
+          ← {t('pa.backToCustodies')}
+        </Button>
+        <RefreshButton onRefresh={load} loading={loading && !uploadOpen} />
+      </div>
 
       <Card className="!p-0 overflow-hidden">
         <div className="px-4 py-4 border-b border-[#e8edf4] bg-gradient-to-r from-brand-50/50 to-white">
@@ -268,15 +373,16 @@ export function PACustodyDetailPage() {
             </div>
             <div>
               <div className="text-[11px] text-muted font-bold">{t('admin.invoicesTotal')}</div>
-              <div className="font-bold text-emerald-700">{formatMoney(custody.spent, lang)}</div>
+              <div className="font-bold text-emerald-700">{formatMoney(displayInvoicesTotal(custody), lang)}</div>
             </div>
             {/* <div>
               <div className="text-[11px] text-muted font-bold">{t('admin.balanceCheck')}</div>
               <BalanceBadge custody={custody} lang={lang} t={t} />
             </div> */}
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <StatusChip status={custody.status} label={statusLabel(custody.status, t)} />
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <StatusChip status={workflowStatus} label={statusLabel(workflowStatus, t)} />
+            <CycleFlow status={workflowStatus} hasPendingPm={pendingPmInvoices.length > 0} />
             {custody.pmApprovedBy && (
               <span className="text-xs font-bold text-brand-700">
                 {t('admin.approvedByPa', { name: userName(custody.pmApprovedBy, lang) })}
@@ -291,98 +397,51 @@ export function PACustodyDetailPage() {
           </div>
         )}
 
-        {canUpload && (
-          <div className="px-4 py-3 flex flex-wrap gap-2 border-b border-[#eef1f6]">
-            <Button size="sm" onClick={() => setUploadOpen(true)}>
-              ⊕ {t('pa.uploadNew')}
-            </Button>
+        {showResubmitNotice && (
+          <div className="px-4 py-3 bg-amber-50 border-b border-amber-100">
+            <Notice icon="↻">{t('pa.resubmitNewInvoicesNotice')}</Notice>
           </div>
         )}
 
+        {pendingPmInvoices.length > 0 && (
+          <div className="px-4 py-3 bg-brand-50 border-b border-brand-100">
+            <Notice icon="⏳">
+              {t('pa.waitingForPaNotice', {
+                count: pendingPmInvoices.length,
+                refs: pendingPmInvoices.map((i) => i.referenceNumber).join('، '),
+              })}
+            </Notice>
+          </div>
+        )}
+
+        <div className="px-4 py-3 flex flex-wrap gap-2 border-b border-[#eef1f6]">
+          <Button size="sm" onClick={() => setUploadOpen(true)}>
+            ⊕ {t('pa.uploadNew')}
+          </Button>
+        </div>
+
         <DataTable
-          columns={[
-            ...(canSubmit
-              ? [{
-                  key: 'sel',
-                  header: (
-                    <input
-                      type="checkbox"
-                      className="w-4 h-4 accent-brand-600"
-                      checked={selectableIds.length > 0 && selectableIds.every((id) => selected.has(id))}
-                      onChange={(e) => toggleAll(selectableIds, e.target.checked)}
-                    />
-                  ),
-                  exportable: false,
-                  className: 'w-10',
-                  render: (inv: Invoice) =>
-                    inv.status === 'accumulated' ? (
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4 accent-brand-600"
-                        checked={selected.has(inv._id)}
-                        onChange={() => toggle(inv._id)}
-                      />
-                    ) : null,
-                }]
-              : []),
-            {
-              key: 'n',
-              header: t('pa.rowNumber'),
-              render: (inv) => (
-                <span className="inline-flex items-center gap-1.5">
-                  {isInvoiceSubmittedForApproval(inv.status) && (
-                    <span
-                      className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 text-xs font-black shrink-0"
-                      title={t('pa.invoiceSubmitted')}
-                    >
-                      ✓
-                    </span>
-                  )}
-                  <span className="font-bold text-brand-600">{inv.referenceNumber}</span>
-                </span>
-              ),
-              exportValue: (inv) => inv.referenceNumber,
-            },
-            {
-              key: 'sup',
-              header: t('pa.supplier'),
-              render: (i) => i.supplier || '—',
-              exportValue: (i) => i.supplier || '',
-            },
-            {
-              key: 'amt',
-              header: t('pa.invoiceTotal'),
-              render: (i) => <ColoredAmount value={i.total} lang={lang} />,
-              exportValue: (i) => String(i.total),
-            },
-            {
-              key: 'date',
-              header: t('common.date'),
-              render: (i) => (i.invoiceDate ? new Date(i.invoiceDate).toLocaleDateString(dateLocale) : '—'),
-              exportValue: (i) => formatDate(i.invoiceDate, lang),
-            },
-            {
-              key: 'st',
-              header: t('common.status'),
-              render: (i) => <StatusChip status={i.status} label={statusLabel(i.status, t)} />,
-              exportValue: (i) => statusLabel(i.status, t),
-            },
-            {
-              key: 'act',
-              header: '',
-              exportable: false,
-              render: (i) => (
-                <Button size="sm" variant="ghost" onClick={() => setDetailId(i._id)}>
-                  {t('common.view')}
-                </Button>
-              ),
-            },
-          ]}
-          data={allInvoices}
-          loading={false}
+          columns={invoiceColumns}
+          data={activeInvoices}
+          loading={loading}
           onRefresh={load}
           emptyText={t('pa.noInvoicesInCustody')}
         />
+
+        {rejectedInvoices.length > 0 && (
+          <div className="border-t border-[#eef1f6]">
+            <div className="px-4 py-3 bg-[#fafbfc] border-b border-[#eef1f6]">
+              <div className="text-sm font-bold text-navy">{t('pa.rejectedInvoicesTitle')}</div>
+              <p className="text-xs text-muted mt-1">{t('pa.rejectedInvoicesNotice')}</p>
+            </div>
+            <DataTable
+              columns={invoiceColumns.filter((col) => col.key !== 'sel')}
+              data={rejectedInvoices}
+              loading={false}
+              emptyText={t('common.noData')}
+            />
+          </div>
+        )}
 
         {canSubmit && (
           <div className="px-4 py-4 border-t border-[#e8edf4] bg-[#f8fafc] flex flex-wrap items-center justify-between gap-4">
@@ -416,9 +475,7 @@ export function PACustodyDetailPage() {
 }
 
 export function PATransactionsPage() {
-  const { t, i18n } = useTranslation();
-  const lang = i18n.language;
-  const [rows, setRows] = useState<(CustodyTransaction & { custodyNumber?: string })[]>([]);
+  const [rows, setRows] = useState<CustodyTransaction[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = async () => {
@@ -432,54 +489,5 @@ export function PATransactionsPage() {
 
   useEffect(() => { load(); }, []);
 
-  return (
-    <Card title={`📒 ${t('pa.transactions')}`} noPadding>
-      <DataTable
-        columns={[
-          {
-            key: 'custody',
-            header: t('nav.myCustody'),
-            render: (tx) => <span className="font-bold text-brand-600">{tx.custodyNumber || '—'}</span>,
-            exportValue: (tx) => tx.custodyNumber || '',
-          },
-          {
-            key: 'type',
-            header: t('pa.transactionType'),
-            render: (tx) => t(`pa.tx.${tx.type}`, { defaultValue: tx.type }),
-            exportValue: (tx) => tx.type,
-          },
-          {
-            key: 'amt',
-            header: t('common.amount'),
-            render: (tx) => <ColoredAmount value={tx.amount} lang={lang} />,
-            exportValue: (tx) => String(tx.amount),
-          },
-          {
-            key: 'bal',
-            header: t('pa.balanceAfter'),
-            render: (tx) => (tx.balanceAfter != null ? formatMoney(tx.balanceAfter, lang) : '—'),
-            exportValue: (tx) => String(tx.balanceAfter ?? ''),
-          },
-          {
-            key: 'desc',
-            header: t('pa.description'),
-            render: (tx) => (lang === 'en' && tx.descriptionEn ? tx.descriptionEn : tx.description) || '—',
-            exportValue: (tx) => tx.description || '',
-          },
-          {
-            key: 'date',
-            header: t('common.date'),
-            render: (tx) => formatDate(tx.createdAt, lang),
-            exportValue: (tx) => formatDate(tx.createdAt, lang),
-          },
-        ]}
-        data={rows}
-        loading={loading}
-        onRefresh={load}
-        exportFilename="my-transactions"
-        exportTitle={t('pa.transactions')}
-        emptyText={t('common.noData')}
-      />
-    </Card>
-  );
+  return <JournalTransactionsList rows={rows} loading={loading} onRefresh={load} />;
 }
