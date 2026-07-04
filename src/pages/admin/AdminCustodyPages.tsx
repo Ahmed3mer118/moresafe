@@ -16,7 +16,7 @@ import { custodyService, projectService, dashboardService, userService } from '.
 import { CustodyArchiveCard, JournalTable } from '../../components/ui/JournalBlock';
 import { JournalTransactionsList } from '../../components/custody/JournalTransactionsList';
 import type { Custody, CustodyTransaction, Project, User, Voucher } from '../../types';
-import { formatMoney, projectName, statusLabel, formatDate, entityId, userName } from '../../utils/format';
+import { formatMoney, projectName, statusLabel, formatDate, entityId, userName, assetUrl } from '../../utils/format';
 import { custodyTotals, proofPayloadFromFile, displayInvoicesTotal, disbursementTotal, disbursementEligibleInvoices } from '../../utils/custodyHelpers';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
 import { Notice } from '../../components/ui/Notice';
@@ -411,7 +411,7 @@ export function AdminDisbursementPage() {
 
       {lightboxUrl && (
         <ImageLightbox
-          images={[{ url: lightboxUrl, alt: t('admin.paymentProof') }]}
+          images={[{ url: assetUrl(lightboxUrl), alt: t('admin.paymentProof') }]}
           index={0}
           onClose={() => setLightboxUrl(null)}
           onIndexChange={() => {}}
@@ -772,6 +772,8 @@ export function AdminVouchersPage() {
         custodyService.disbursementQueue(),
       ]);
       setVouchers(v);
+      console.log('queue', queue);
+      console.log('vouchers', v);
       setPending(queue);
     } catch {
       showToast(t('common.noData'), 'error');
@@ -941,7 +943,7 @@ export function AdminVouchersPage() {
 
       {lightboxUrl && (
         <ImageLightbox
-          images={[{ url: lightboxUrl, alt: t('admin.paymentProof') }]}
+          images={[{ url: assetUrl(lightboxUrl), alt: t('admin.paymentProof') }]}
           index={0}
           onClose={() => setLightboxUrl(null)}
           onIndexChange={() => {}}
