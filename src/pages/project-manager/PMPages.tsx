@@ -10,7 +10,7 @@ import { Notice } from '../../components/ui/Notice';
 import { StatusChip, Amount } from '../../components/ui/Chip';
 import { FormField, inputClass, selectClass } from '../../components/ui/FormField';
 import { ProgressBar } from '../../components/ui/ProgressBar';
-import { ProjectBarChart, StatusDoughnutChart } from '../../components/charts/DashboardCharts';
+import { ProjectBarChart } from '../../components/charts/DashboardCharts';
 import { dashboardService, custodyService, projectService, userService, invoiceService } from '../../services';
 import type { Custody, Project, User, Invoice } from '../../types';
 import { useFormDraft } from '../../hooks/useFormDraft';
@@ -23,7 +23,6 @@ import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { RejectReasonModal } from '../../components/ui/RejectReasonModal';
 import { PageLoader } from '../../components/ui/PageLoader';
 import { RefreshButton } from '../../components/ui/RefreshButton';
-import { notificationTypeClass } from '../../utils/notificationStyles';
 import { CustodyReviewCard } from '../../components/custody/CustodyReviewCard';
 import { displayInvoicesTotal } from '../../utils/custodyHelpers';
 import { BudgetOverview } from '../../components/budget/BudgetOverview';
@@ -171,7 +170,6 @@ export function PMHomePage() {
 
   useEffect(() => { load(); }, []);
 
-  const team = chartOrFallback(data?.custodyChart);
   const projectList = data?.projectList ?? [];
   const budgetTotals = summarizeProjects(projectList);
 
