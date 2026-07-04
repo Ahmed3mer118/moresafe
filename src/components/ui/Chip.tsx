@@ -17,7 +17,7 @@ export function statusToChip(status?: string): ChipVariant {
   if (!status) return 'gray';
   if (['settled', 'active', 'open', 'accumulated', 'finance_approved'].includes(status)) return 'green';
   if (['closed', 'pending_pm', 'pending_finance', 'pm_approved', 'near_budget', 'finance_pending'].includes(status)) return 'amber';
-  if (status.includes('reject')) return 'red';
+  if (status === 'over_budget' || status.includes('reject')) return 'red';
   if (status === 'new') return 'blue';
   return 'gray';
 }

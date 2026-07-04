@@ -17,6 +17,7 @@ import { dashboardService, custodyService, invoiceService, projectService } from
 import type { Custody, Invoice, Project } from '../../types';
 import { formatMoney, projectName, entityId, statusLabel, invoiceManagerName, formatDate } from '../../utils/format';
 import { exportInvoicesFromTable } from '../../utils/exportInvoicesPdf';
+import { notificationTypeClass } from '../../utils/notificationStyles';
 import { showToast } from '../../utils/toast';
 import { isInvoiceSubmittedForApproval } from '../../utils/custodyHelpers';
 import { Notice } from '../../components/ui/Notice';
@@ -1049,7 +1050,7 @@ export function PANotificationsPage() {
     <Card title={`🔔 ${t('nav.notifications')}`} action={<RefreshButton onRefresh={load} loading={loading} />}>
       <div className="space-y-3">
         {data?.notifications.map((n, i) => (
-          <div key={i} className={`p-4 rounded-xl border text-sm ${n.type === 'reject' ? 'border-red-200 bg-red-50' : 'border-[#e3e9f2]'}`}>
+          <div key={i} className={`p-4 rounded-xl border text-sm ${notificationTypeClass(n.type)}`}>
             <b className="text-navy">{n.title}</b>
             <p className="text-muted mt-1">{n.message}</p>
             <div className="text-[11px] text-muted mt-2">{new Date(n.createdAt).toLocaleString(dateLocale)}</div>

@@ -27,7 +27,7 @@ interface BudgetOverviewProps {
 }
 
 function healthLabel(health: ReturnType<typeof budgetHealth>, t: (k: string) => string) {
-  if (health === 'over') return t('budget.overBudget');
+  if (health === 'over') return t('status.over_budget');
   if (health === 'near') return t('budget.nearBudget');
   if (health === 'ok') return t('budget.withinBudget');
   return t('budget.noBudgetSet');
@@ -76,8 +76,12 @@ export function BudgetOverview({
           <StatCard
             icon="💰"
             label={t('budget.remaining')}
-            value={formatMoney(summary.remaining, lang)}
-            color="green"
+            value={
+              summary.spent > summary.budget && summary.budget > 0
+                ? `-${formatMoney(summary.spent - summary.budget, lang)}`
+                : formatMoney(summary.remaining, lang)
+            }
+            color={summary.spent > summary.budget ? 'red' : 'green'}
             trendUp={summary.remaining >= 0}
           />
           <StatCard
@@ -103,8 +107,9 @@ export function BudgetOverview({
           const budget = p.budget || 0;
           const health = budgetHealth(spent, budget);
           const pct = budgetPercent(spent, budget);
-          const remaining = Math.max(0, budget - spent);
+          const remaining = budget - spent;
           const over = budget > 0 && spent > budget;
+          const displayStatus = over ? 'over_budget' : p.status;
 
           return (
             <article
@@ -126,9 +131,9 @@ export function BudgetOverview({
               >
                 <div>
                   <h3 className="font-extrabold text-navy">{projectName(p, lang)}</h3>
-                  {p.status && (
+                  {displayStatus && (
                     <div className="mt-1">
-                      <StatusChip status={p.status} label={statusLabel(p.status, t)} />
+                      <StatusChip status={displayStatus} label={statusLabel(displayStatus, t)} />
                     </div>
                   )}
                 </div>
@@ -142,7 +147,7 @@ export function BudgetOverview({
                         : 'border-brand-200 text-brand-600 bg-brand-50',
                   )}
                 >
-                  {budget ? `${pct}%` : '—'}
+                  {budget ? (over ? `${pct}%+` : `${pct}%`) : '—'}
                 </div>
               </div>
 
@@ -168,11 +173,11 @@ export function BudgetOverview({
 
                 <div>
                   <div className="flex justify-between text-xs font-bold mb-1.5">
-                    <span className="text-muted">{healthLabel(health, t)}</span>
-                    <span className="text-navy">{formatMoney(spent, lang)} / {formatMoney(budget, lang)}</span>
+                    <span className={over ? 'text-red-600 font-extrabold' : 'text-muted'}>{healthLabel(health, t)}</span>
+                    <span className={over ? 'text-red-600' : 'text-navy'}>{formatMoney(spent, lang)} / {formatMoney(budget, lang)}</span>
                   </div>
                   <ProgressBar
-                    value={Math.min(spent, budget || spent || 1)}
+                    value={over ? budget : Math.min(spent, budget || spent || 1)}
                     max={budget || spent || 1}
                     variant={budgetBarVariant(health)}
                   />

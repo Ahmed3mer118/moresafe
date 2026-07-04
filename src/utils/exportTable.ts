@@ -31,8 +31,8 @@ export function exportTableToCsv<T>(
   return true;
 }
 
-function escapeHtml(value: string) {
-  return value
+function escapeHtml(value: unknown) {
+  return String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -89,6 +89,7 @@ export async function exportTablePdf<T>({
     .extra .meta { margin: 0 0 12px; font-size: 11px; color: #64748b; }
     .extra .images { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
     .extra img { width: 100%; max-height: 320px; object-fit: contain; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+    .extra .pdf-note { font-size: 12px; color: #64748b; padding: 8px; border: 1px dashed #cbd5e1; border-radius: 8px; }
     @media print { body { margin: 12mm; } }
   </style>
 </head>
@@ -100,16 +101,49 @@ export async function exportTablePdf<T>({
     <tbody>${tableBody || `<tr><td colspan="${columns.length}">${lang === 'ar' ? 'لا بيانات' : 'No data'}</td></tr>`}</tbody>
   </table>
   ${extraHtml ? `<div class="extra">${extraHtml}</div>` : ''}
-  <script>window.onload = () => { window.print(); };</script>
 </body>
 </html>`;
 
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const win = window.open(url, '_blank', 'noopener,noreferrer');
-  if (!win) {
-    URL.revokeObjectURL(url);
-    throw new Error('Popup blocked');
-  }
-  win.addEventListener('load', () => URL.revokeObjectURL(url));
+  await openPrintDocument(html);
+}
+
+function openPrintDocument(html: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute(
+      'style',
+      'position:fixed;top:0;left:0;width:0;height:0;border:0;visibility:hidden',
+    );
+    document.body.appendChild(iframe);
+
+    let done = false;
+    const finish = (err?: Error) => {
+      if (done) return;
+      done = true;
+      setTimeout(() => {
+        if (iframe.parentNode) document.body.removeChild(iframe);
+      }, 3000);
+      if (err) reject(err);
+      else resolve();
+    };
+
+    const printFrame = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        finish();
+      } catch (err) {
+        finish(err instanceof Error ? err : new Error('Export failed'));
+      }
+    };
+
+    iframe.onload = () => setTimeout(printFrame, 200);
+    iframe.onerror = () => finish(new Error('Export failed'));
+
+    iframe.srcdoc = html;
+
+    setTimeout(() => {
+      if (!done) printFrame();
+    }, 1200);
+  });
 }

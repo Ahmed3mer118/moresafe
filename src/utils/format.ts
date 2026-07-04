@@ -15,7 +15,11 @@ export function formatDate(value?: string | Date | null, lang = 'ar') {
   return new Date(value).toLocaleDateString(locale);
 }
 
-export function projectName(p: { name: string; nameEn?: string }, lang: string) {
+export function projectName(
+  p: { name: string; nameEn?: string } | string | null | undefined,
+  lang: string,
+) {
+  if (!p || typeof p === 'string') return '—';
   return lang === 'en' && p.nameEn ? p.nameEn : p.name;
 }
 

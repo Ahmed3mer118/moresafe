@@ -40,8 +40,6 @@ export function isRejectedInvoice(status: string) {
 
 /** Derive workflow status from invoices when DB status is stale (e.g. after repair glitch) */
 export function effectiveCustodyStatus(custody: Custody): string {
-  if (custody.settledAt || custody.disbursementProof) return 'settled';
-
   const invoices = custody.invoices ?? [];
   const hasPendingPm = invoices.some((i) => i.status === 'pending_pm');
   const hasPendingFinance = invoices.some((i) => i.status === 'pending_finance');
@@ -49,6 +47,7 @@ export function effectiveCustodyStatus(custody: Custody): string {
   const hasSettledInv = invoices.some((i) => i.status === 'settled');
 
   if (hasFinanceApproved && !hasPendingFinance) return 'finance_pending';
+  if (custody.settledAt || custody.disbursementProof) return 'settled';
   if (hasPendingFinance) return 'pm_approved';
   if (hasSettledInv && !hasPendingPm) return 'settled';
   if (hasSettledInv && hasPendingPm) return 'settled';

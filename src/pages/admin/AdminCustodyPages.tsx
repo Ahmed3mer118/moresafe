@@ -17,7 +17,7 @@ import { CustodyArchiveCard, JournalTable } from '../../components/ui/JournalBlo
 import { JournalTransactionsList } from '../../components/custody/JournalTransactionsList';
 import type { Custody, CustodyTransaction, Project, User, Voucher } from '../../types';
 import { formatMoney, projectName, statusLabel, formatDate, entityId, userName } from '../../utils/format';
-import { custodyTotals, proofPayloadFromFile, displayInvoicesTotal, disbursementTotal } from '../../utils/custodyHelpers';
+import { custodyTotals, proofPayloadFromFile, displayInvoicesTotal, disbursementTotal, disbursementEligibleInvoices } from '../../utils/custodyHelpers';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
 import { Notice } from '../../components/ui/Notice';
 import { RefreshButton } from '../../components/ui/RefreshButton';
@@ -822,7 +822,9 @@ export function AdminVouchersPage() {
           <p className="text-sm text-muted text-center py-6">{t('admin.noPendingDisbursement')}</p>
         ) : (
           <div className="space-y-4">
-            {pending.map((c) => (
+            {pending.map((c) => {
+              const pendingInvoices = disbursementEligibleInvoices(c.invoices);
+              return (
               <div key={c._id} className="p-4 rounded-xl border border-[#e3e9f2] bg-[#f9fbfe] space-y-3">
                 <div className="flex flex-wrap justify-between gap-2">
                   <div>
@@ -830,6 +832,11 @@ export function AdminVouchersPage() {
                     <div className="text-sm text-muted">
                       {userName(c.holder, lang)} · {projectName(c.project, lang)}
                     </div>
+                    {pendingInvoices.length > 0 && (
+                      <div className="text-xs text-brand-700 font-bold mt-1">
+                        {pendingInvoices.map((i) => `${i.referenceNumber} (${formatMoney(i.total, lang)})`).join(' · ')}
+                      </div>
+                    )}
                   </div>
                   <Amount>{formatMoney(disbursementTotal(c), lang)}</Amount>
                 </div>
@@ -876,7 +883,7 @@ export function AdminVouchersPage() {
                 )}
                 <Button onClick={() => registerDisbursement(c)}>{t('admin.registerVoucher')}</Button>
               </div>
-            ))}
+            );})}
           </div>
         )}
       </Card>
@@ -911,18 +918,18 @@ export function AdminVouchersPage() {
                       </Button>
                     </div>
                   )}
-                  {linked?.accrualEntry && (
+                  {v.accrualEntry && v.accrualEntry.length > 0 && (
                     <JournalTable
                       title={lang === 'ar' ? 'استحقاق مشتريات الموقع' : 'Site purchases accrual'}
                       tag={lang === 'ar' ? 'قيد استحقاق' : 'Accrual'}
-                      lines={linked.accrualEntry}
+                      lines={v.accrualEntry}
                     />
                   )}
-                  {linked?.disbursementEntry && (
+                  {v.disbursementEntry && v.disbursementEntry.length > 0 && (
                     <JournalTable
                       title={lang === 'ar' ? 'إعادة شحن العهدة بنكياً' : 'Bank disbursement'}
                       tag={lang === 'ar' ? 'قيد الصرف' : 'Disbursement'}
-                      lines={linked.disbursementEntry}
+                      lines={v.disbursementEntry}
                     />
                   )}
                 </CustodyArchiveCard>

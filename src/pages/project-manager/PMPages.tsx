@@ -23,6 +23,7 @@ import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { RejectReasonModal } from '../../components/ui/RejectReasonModal';
 import { PageLoader } from '../../components/ui/PageLoader';
 import { RefreshButton } from '../../components/ui/RefreshButton';
+import { notificationTypeClass } from '../../utils/notificationStyles';
 import { CustodyReviewCard } from '../../components/custody/CustodyReviewCard';
 import { displayInvoicesTotal } from '../../utils/custodyHelpers';
 import { BudgetOverview } from '../../components/budget/BudgetOverview';
@@ -195,7 +196,6 @@ export function PMHomePage() {
         />
       </Card>
 
-      <Card title={t('pm.stats.custodyStatus')}><StatusDoughnutChart labels={team.labels} data={team.data} /></Card>
       {pending.length > 0 && (
         <Card title="عهد مغلقة بانتظار مراجعتي" action={<Button size="sm" variant="ghost" onClick={() => window.location.href = '/dashboard/project-accountant/approvals'}>عرض الكل ←</Button>}>
           <div className="space-y-2">

@@ -6,6 +6,7 @@ import { dashboardService } from '../../services';
 import { useNotificationSync } from '../../hooks/useNotificationPoll';
 import { userName } from '../../utils/format';
 import { ROLE_DASHBOARD, type Notification, type Role } from '../../types';
+import { notificationBorderAccent, notificationTypeClass } from '../../utils/notificationStyles';
 
 interface TopbarProps {
   title: string;
@@ -47,12 +48,8 @@ export function Topbar({ title, subtitle, onMenuClick }: TopbarProps) {
     loadNotifications();
   };
 
-  const typeStyle = (type: string) => {
-    if (type === 'reject') return 'border-s-red-400 bg-red-50/80';
-    if (type === 'success') return 'border-s-brand-500 bg-brand-50/50';
-    if (type === 'warning') return 'border-s-amber-400 bg-amber-50/60';
-    return 'border-s-[#e3e9f2]';
-  };
+  const typeStyle = (type: string) => notificationTypeClass(type);
+  const borderAccent = (type: string) => notificationBorderAccent(type);
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-[#e3e9f2] px-4 lg:px-6 py-3.5 flex items-center gap-3 lg:gap-5 shadow-[0_1px_0_rgba(31,58,95,0.04)]">
@@ -98,7 +95,7 @@ export function Topbar({ title, subtitle, onMenuClick }: TopbarProps) {
                     key={n._id}
                     type="button"
                     onClick={() => !n.isRead && markRead(n._id)}
-                    className={`w-full text-start px-4 py-3 border-b border-[#eef1f6] text-xs leading-relaxed border-s-2 ${typeStyle(n.type)} ${!n.isRead ? '' : 'opacity-75'}`}
+                    className={`w-full text-start px-4 py-3 border-b border-[#eef1f6] text-xs leading-relaxed border-s-2 ${borderAccent(n.type)} ${typeStyle(n.type)} ${!n.isRead ? '' : 'opacity-75'}`}
                   >
                     <div className="font-bold text-navy">{i18n.language === 'en' && n.titleEn ? n.titleEn : n.title}</div>
                     <div className="text-muted mt-1">{i18n.language === 'en' && n.messageEn ? n.messageEn : n.message}</div>

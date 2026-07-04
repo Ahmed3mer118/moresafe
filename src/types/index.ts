@@ -142,4 +142,7 @@ export interface Voucher {
   createdAt?: string;
   project?: Project;
   custody?: Custody;
+  accrualEntry?: JournalLine[];
+  disbursementEntry?: JournalLine[];
+  invoiceIds?: string[];
 }

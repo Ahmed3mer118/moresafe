@@ -18,6 +18,7 @@ import { custodyService } from '../../services';
 import type { Custody, CustodyTransaction, Invoice } from '../../types';
 import { formatMoney, projectName, statusLabel, formatDate, userName, entityId } from '../../utils/format';
 import { custodyTotals, isInvoiceSubmittedForApproval, effectiveCustodyStatus, partitionCustodyInvoices, displayInvoicesTotal } from '../../utils/custodyHelpers';
+import { exportInvoicesFromTable } from '../../utils/exportInvoicesPdf';
 import { showToast } from '../../utils/toast';
 
 const PM_BASE = '/dashboard/project-manager';
@@ -426,6 +427,23 @@ export function PACustodyDetailPage() {
           loading={loading}
           onRefresh={load}
           emptyText={t('pa.noInvoicesInCustody')}
+          exportFilename={`custody-${custody.custodyNumber}-invoices`}
+          exportTitle={`${custody.custodyNumber} — ${t('pa.custodyInvoices')}`}
+          exportLang={lang}
+          exportRowLabel={lang === 'ar' ? 'فاتورة' : 'invoices'}
+          onExportPdf={() => {
+            const rows = allInvoices;
+            if (!rows.length) return showToast(t('common.noData'), 'error');
+            exportInvoicesFromTable({
+              title: `${custody.custodyNumber} — ${t('pa.custodyInvoices')}`,
+              filename: `custody-${custody.custodyNumber}-invoices`,
+              columns: invoiceColumns.filter((col) => col.key !== 'sel'),
+              rows,
+              lang,
+              t,
+              project: custody.project,
+            }).catch(() => showToast(t('common.exportFailed'), 'error'));
+          }}
         />
 
         {rejectedInvoices.length > 0 && (

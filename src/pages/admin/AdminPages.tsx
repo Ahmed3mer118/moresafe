@@ -544,6 +544,7 @@ export function AdminProjectsPage() {
               <option value="active">نشط</option>
               <option value="new">جديد</option>
               <option value="near_budget">قارب الميزانية</option>
+              <option value="over_budget">تخطي الميزانية</option>
               <option value="closed">مغلق</option>
             </select>
           </FormField>

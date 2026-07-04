@@ -1,9 +1,9 @@
 export type ToastType = 'success' | 'error' | 'info';
 
 const styles: Record<ToastType, string> = {
-  success: 'bg-brand-600 text-white border-brand-700',
+  success: 'bg-emerald-600 text-white border-emerald-700',
   error: 'bg-red-600 text-white border-red-700',
-  info: 'bg-navy text-white border-[#2a4a72]',
+  info: 'bg-amber-500 text-amber-950 border-amber-600',
 };
 
 let timer: ReturnType<typeof setTimeout> | null = null;

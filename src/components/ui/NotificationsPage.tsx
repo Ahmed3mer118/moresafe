@@ -6,6 +6,7 @@ import { RefreshButton } from './RefreshButton';
 import { dashboardService } from '../../services';
 import type { Notification } from '../../types';
 import { useUi } from '../../context/UiContext';
+import { notificationTypeClass } from '../../utils/notificationStyles';
 
 export function NotificationsPage() {
   const { t, i18n } = useTranslation();
@@ -23,12 +24,7 @@ export function NotificationsPage() {
       load();
     }, { success: 'تم تعليم الإشعارات كمقروءة' });
 
-  const typeStyle = (type: string) => {
-    if (type === 'reject') return 'border-red-200 bg-red-50';
-    if (type === 'success') return 'border-brand-200 bg-brand-50';
-    if (type === 'warning') return 'border-amber-200 bg-amber-50';
-    return 'border-[#e3e9f2] bg-white';
-  };
+  const typeStyle = (type: string) => notificationTypeClass(type);
 
   return (
     <Card

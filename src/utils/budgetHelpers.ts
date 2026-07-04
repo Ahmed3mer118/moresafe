@@ -46,7 +46,7 @@ export function summarizeProjects(projects: Project[] = []) {
     projectCount: projects.length,
     budget,
     spent,
-    remaining: Math.max(0, budget - spent),
+    remaining: budget - spent,
     overCount,
     nearCount,
   };

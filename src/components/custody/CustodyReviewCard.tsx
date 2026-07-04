@@ -14,6 +14,8 @@ import {
   formatDate,
 } from '../../utils/format';
 import { displayInvoicesTotal } from '../../utils/custodyHelpers';
+import { exportInvoicesFromTable } from '../../utils/exportInvoicesPdf';
+import { showToast } from '../../utils/toast';
 
 export function custodyInvoiceColumns(
   t: TFunction,
@@ -227,6 +229,21 @@ export function CustodyReviewCard({
           exportTitle={`${custody.custodyNumber} — ${t('pm.invoicesLabel')}`}
           exportLang={i18n.language}
           exportRowLabel={i18n.language === 'ar' ? 'فاتورة' : 'invoices'}
+          onExportPdf={() => {
+            if (!visibleInvoices.length) {
+              showToast(t('common.noData'), 'error');
+              return;
+            }
+            exportInvoicesFromTable({
+              title: `${custody.custodyNumber} — ${t('pm.invoicesLabel')}`,
+              filename: `custody-${custody.custodyNumber}-invoices`,
+              columns,
+              rows: visibleInvoices,
+              lang: i18n.language,
+              t,
+              project: custody.project,
+            }).catch(() => showToast(t('common.exportFailed'), 'error'));
+          }}
         />
       ) : (
         <p className="text-center text-[#94a3b8] text-sm py-6">{t('pm.noInvoices')}</p>

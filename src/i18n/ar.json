@@ -46,14 +46,14 @@
   },
   "roles": {
     "admin": "مدير النظام",
-    "chief_accountant": "مدير المحاسبين",
+    "chief_accountant": "مدير المشاريع",
     "project_accountant": "محاسب العهد",
     "project_manager": "مدير المشروع"
   },
   "cycle": {
     "stepPm": "مدير المشروع",
     "stepPa": "محاسب العهد",
-    "stepChief": "مدير المحاسبين",
+    "stepChief": "مدير المشاريع",
     "stepDisburse": "إدارة الصرف",
     "stepDone": "مسوّاة",
     "subPm": "عهدة مفتوحة / فواتير",
@@ -278,7 +278,7 @@
     "allProjects": "— كل المشاريع —",
     "reportManagers": "مديرو المشاريع",
     "reportAccountants": "محاسبو العهد",
-    "reportChief": "مدير المحاسبين",
+    "reportChief": "مدير المشاريع",
     "reportProjects": "المشاريع",
     "custodiesCount": "عدد العهد",
     "totalAllocated": "إجمالي المخصص",
@@ -308,7 +308,7 @@
     }
   },
   "pm": {
-    "subtitle": "محاسب المشروع",
+    "subtitle": "محاسب العهد",
     "projectsNotice": "اختر المشروع ثم مدير المشروع لعرض عهدته واعتمادها — تظهر لك المشاريع المُسندة لدورك فقط.",
     "selectProject": "— اختر المشروع —",
     "selectManager": "— اختر مدير المشروع —",
@@ -353,7 +353,7 @@
     "noArchivedInvoices": "لا توجد فواتير قديمة",
     "approvalsNotice": "حدّد الفواتير بالـ checkbox ثم اعتمد أو ارفض المحدد دفعة واحدة.",
     "custodyApprovalsNotice": "حدّد العهد أو الفواتير بداخلها — ثم اعتمد أو ارفض المحدد (يمكن رفض فاتورة دون رفض العهدة كاملة).",
-    "custodyArchiveNotice": "أرشيف العهد المعتمدة والمرفوضة من محاسب المشروع — اضغط على أي عهدة لعرض الفواتير.",
+    "custodyArchiveNotice": "أرشيف العهد المعتمدة والمرفوضة من محاسب العهد — اضغط على أي عهدة لعرض الفواتير.",
     "archiveApproved": "معتمدة",
     "archiveRejected": "مرفوضة",
     "noArchivedCustodies": "لا توجد عهد في الأرشيف",
@@ -425,6 +425,7 @@
     "pending_finance": "بانتظار المالية",
     "active": "نشط",
     "near_budget": "قارب الميزانية",
+    "over_budget": "تخطي الميزانية",
     "new": "جديد",
     "unknown": "غير محدد",
     "finance_pending": "بانتظار المالية",

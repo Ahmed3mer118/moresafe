@@ -430,6 +430,7 @@
     "pending_finance": "Pending Finance",
     "active": "Active",
     "near_budget": "Near Budget",
+    "over_budget": "Budget exceeded",
     "new": "New",
     "unknown": "Not set",
     "finance_pending": "Pending Finance",
