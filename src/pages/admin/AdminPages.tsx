@@ -153,7 +153,16 @@ export function AdminHomePage() {
   );
 }
 
-const EMPTY_USER_FORM = { name: '', nameEn: '', email: '', password: '', role: 'project_accountant', isActive: true };
+const EMPTY_USER_FORM = {
+  name: '',
+  nameEn: '',
+  email: '',
+  alternateEmail: '',
+  password: '',
+  role: 'project_accountant',
+  isActive: true,
+  projectIds: [] as string[],
+};
 const USER_DRAFT_OMIT: (keyof typeof EMPTY_USER_FORM)[] = ['password'];
 const EMPTY_PROJECT_FORM = { name: '', nameEn: '', budget: 0, status: 'active', manager: '', accountant: '' };
 const SETTINGS_INIT = { companyName: '', taxNumber: '' };
@@ -175,6 +184,7 @@ export function AdminUsersPage() {
   const { t, i18n } = useTranslation();
   const { runAction } = useUi();
   const [users, setUsers] = useState<User[]>([]);
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [modal, setModal] = useState<'create' | 'edit' | null>(null);
   const [viewUser, setViewUser] = useState<User | null>(null);
   const [editingId, setEditingId] = useState('');
@@ -193,6 +203,7 @@ export function AdminUsersPage() {
 
   const load = () => userService.list().then(setUsers);
   useEffect(() => { load(); }, []);
+  useEffect(() => { projectService.list().then(setAllProjects).catch(() => setAllProjects([])); }, []);
 
   useEffect(() => {
     if (modal !== 'edit' || !editingId) return;
@@ -203,9 +214,11 @@ export function AdminUsersPage() {
       name: u.name,
       nameEn: u.nameEn || '',
       email: u.email,
+      alternateEmail: u.alternateEmail || '',
       password: '',
       role: u.role,
       isActive: u.isActive,
+      projectIds: (u.projects ?? []).map((p) => String(p._id || p.id)).filter(Boolean),
     });
   }, [modal, editingId, users, setForm]);
 
@@ -238,16 +251,20 @@ export function AdminUsersPage() {
           name: form.name,
           nameEn: form.nameEn || undefined,
           email: form.email,
+          alternateEmail: form.alternateEmail || undefined,
           password: form.password,
           role: form.role,
+          projects: form.role === 'project_accountant' ? form.projectIds : undefined,
         });
       } else {
         const payload: Record<string, unknown> = {
           name: form.name,
           nameEn: form.nameEn,
           email: form.email,
+          alternateEmail: form.alternateEmail || undefined,
           role: form.role,
           isActive: form.isActive,
+          projects: form.role === 'project_accountant' ? form.projectIds : [],
         };
         if (form.password) payload.password = form.password;
         await userService.update(editingId, payload);
@@ -334,6 +351,9 @@ export function AdminUsersPage() {
           <FormField label="الاسم"><input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></FormField>
           <FormField label="English name"><input className={inputClass} value={form.nameEn} onChange={(e) => setForm({ ...form, nameEn: e.target.value })} /></FormField>
           <FormField label="البريد"><input className={inputClass} type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></FormField>
+          <FormField label={t('admin.alternateEmail')} hint={t('admin.alternateEmailHint')}>
+            <input className={inputClass} type="email" value={form.alternateEmail} onChange={(e) => setForm({ ...form, alternateEmail: e.target.value })} placeholder={t('admin.alternateEmailPlaceholder')} />
+          </FormField>
           <FormField label="الدور">
             <select className={selectClass} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
               <option value="admin">مدير النظام</option>
@@ -362,6 +382,76 @@ export function AdminUsersPage() {
                 <option value="active">نشط</option>
                 <option value="inactive">معطّل</option>
               </select>
+            </FormField>
+          )}
+          {form.role === 'project_accountant' && (
+            <FormField label={t('admin.assignedProjects')} hint={t('admin.assignedProjectsHint')} full>
+              <div className="rounded-xl border border-[#e3e9f2] bg-[#f8fafc] overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 border-b border-[#e8edf4] bg-white">
+                  <span className="text-xs font-bold text-muted">
+                    {form.projectIds.length
+                      ? t('admin.projectsSelected', { count: form.projectIds.length })
+                      : t('admin.allProjectsAccess')}
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="text-xs font-bold text-brand-600 hover:text-brand-700 px-2 py-1 rounded-lg hover:bg-brand-50 transition-colors"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          projectIds: allProjects.map((p) => String(p._id || p.id)).filter(Boolean),
+                        })
+                      }
+                    >
+                      {t('admin.selectAllProjects')}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-xs font-bold text-muted hover:text-navy px-2 py-1 rounded-lg hover:bg-[#f1f5f9] transition-colors"
+                      onClick={() => setForm({ ...form, projectIds: [] })}
+                    >
+                      {t('admin.clearProjects')}
+                    </button>
+                  </div>
+                </div>
+                <div className="max-h-52 overflow-y-auto">
+                  {allProjects.length === 0 ? (
+                    <p className="text-sm text-muted text-center py-6">{t('common.noData')}</p>
+                  ) : (
+                    allProjects.map((p) => {
+                      const id = String(p._id || p.id);
+                      const checked = form.projectIds.includes(id);
+                      return (
+                        <label
+                          key={id}
+                          className={`flex items-center gap-3 px-4 py-3 cursor-pointer border-b border-[#eef1f6] last:border-b-0 transition-colors ${
+                            checked ? 'bg-brand-50/60' : 'hover:bg-white'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 accent-brand-600 shrink-0 cursor-pointer"
+                            checked={checked}
+                            onChange={() => {
+                              setForm({
+                                ...form,
+                                projectIds: checked
+                                  ? form.projectIds.filter((x) => x !== id)
+                                  : [...form.projectIds, id],
+                              });
+                            }}
+                          />
+                          <span className="flex-1 min-w-0 font-bold text-navy text-sm">
+                            {projectName(p, i18n.language)}
+                          </span>
+                          <StatusChip status={p.status} label={statusLabel(p.status, t)} />
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
             </FormField>
           )}
         </div>

@@ -30,6 +30,7 @@ import {
   PMCustodyApprovalsPage,
   PMCustodyArchivePage,
   PMCustodyArchiveDetailPage,
+  PAApprovalLogPage,
 } from '../pages/project-manager/PMPages';
 import {
   PAHomePage,
@@ -128,7 +129,7 @@ export const FinanceLayout = DashboardLayoutFactory.create({
         { to: '/dashboard/finance/budgets', labelKey: 'nav.budgets', icon: '📊' },
         { to: '/dashboard/finance/suppliers', labelKey: 'nav.suppliers', icon: '🏪' },
         { to: '/dashboard/finance/archive', labelKey: 'nav.archive', icon: '🗄️' },
-        { to: '/dashboard/finance/reports', labelKey: 'nav.reports', icon: '📁' },
+        // { to: '/dashboard/finance/reports', labelKey: 'nav.reports', icon: '📁' },
         { to: '/dashboard/finance/tax', labelKey: 'nav.tax', icon: '%' },
         { to: '/dashboard/finance/notifications', labelKey: 'nav.notifications', icon: '🔔' },
       ],
@@ -156,6 +157,7 @@ export const PMLayout = DashboardLayoutFactory.create({
     'project-accountant': [{ labelKey: 'nav.home', to: '/dashboard/project-accountant' }],
     home: [{ labelKey: 'nav.home', to: '/dashboard/project-accountant' }],
     approvals: [{ labelKey: 'nav.home', to: '/dashboard/project-accountant' }, { labelKey: 'nav.approvals' }],
+    'approval-log': [{ labelKey: 'nav.home', to: '/dashboard/project-accountant' }, { labelKey: 'pa.approvalLog' }],
     'custody-archive': [{ labelKey: 'nav.home', to: '/dashboard/project-accountant' }, { labelKey: 'nav.custodyArchive' }],
     'custody-archive/:custodyId': [
       { labelKey: 'nav.home', to: '/dashboard/project-accountant' },
@@ -173,6 +175,7 @@ export const PMLayout = DashboardLayoutFactory.create({
       items: [
         { to: '/dashboard/project-accountant', labelKey: 'nav.home', icon: '▦', end: true },
         { to: '/dashboard/project-accountant/approvals', labelKey: 'nav.approvals', icon: '✔' },
+        { to: '/dashboard/project-accountant/approval-log', labelKey: 'pa.approvalLog', icon: '📋' },
         { to: '/dashboard/project-accountant/custody-archive', labelKey: 'nav.custodyArchive', icon: '📦' },
         // { to: '/dashboard/project-accountant/emergency', labelKey: 'nav.emergency', icon: '⚡' },
         { to: '/dashboard/project-accountant/engineers', labelKey: 'nav.engineers', icon: '👷' },
@@ -186,6 +189,7 @@ export const PMLayout = DashboardLayoutFactory.create({
     'project-accountant': { titleKey: 'nav.home' },
     home: { titleKey: 'nav.home' },
     approvals: { titleKey: 'nav.approvals' },
+    'approval-log': { titleKey: 'pa.approvalLog' },
     'custody-archive': { titleKey: 'nav.custodyArchive' },
     archive: { titleKey: 'nav.custodyApprovals' },
     emergency: { titleKey: 'nav.emergency' },
@@ -292,6 +296,7 @@ export const financeRoutes = [
 export const pmRoutes = [
   { index: true, element: <PMHomePage /> },
   { path: 'approvals', element: <PMCustodyApprovalsPage /> },
+  { path: 'approval-log', element: <PAApprovalLogPage /> },
   { path: 'custody-archive', element: <PMCustodyArchivePage /> },
   { path: 'custody-archive/:custodyId', element: <PMCustodyArchiveDetailPage /> },
   { path: 'emergency', element: <PMEmergencyPage /> },

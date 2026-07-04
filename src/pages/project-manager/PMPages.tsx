@@ -23,6 +23,7 @@ import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { RejectReasonModal } from '../../components/ui/RejectReasonModal';
 import { PageLoader } from '../../components/ui/PageLoader';
 import { RefreshButton } from '../../components/ui/RefreshButton';
+import { Pagination } from '../../components/ui/Pagination';
 import { CustodyReviewCard } from '../../components/custody/CustodyReviewCard';
 import { displayInvoicesTotal } from '../../utils/custodyHelpers';
 import { BudgetOverview } from '../../components/budget/BudgetOverview';
@@ -510,7 +511,7 @@ export function PMCustodyApprovalsPage() {
   useEffect(() => { projectService.list().then(setProjects); }, []);
 
   const load = () => {
-    const params: Record<string, string> = {};
+    const params: Record<string, string> = { queueOnly: 'true' };
     if (projectId) params.projectId = projectId;
     if (selected) params.holderId = selected;
     setLoading(true);
@@ -778,6 +779,12 @@ export function PMCustodyArchivePage() {
               header: t('common.status'),
               render: (c: Custody) => <StatusChip status={c.status} label={statusLabel(c.status, t)} />,
               exportValue: (c: Custody) => statusLabel(c.status, t),
+            },
+            {
+              key: 'pa',
+              header: t('pa.approvedBy'),
+              render: (c: Custody) => (c.pmApprovedBy ? userName(c.pmApprovedBy, lang) : '—'),
+              exportValue: (c: Custody) => (c.pmApprovedBy ? userName(c.pmApprovedBy, lang) : ''),
             },
             {
               key: 'date',
@@ -1213,6 +1220,104 @@ export function PMReportsPage() {
       </StatsGrid>
       <Card title={t('nav.reports')}>
         <ProjectBarChart labels={trend.labels} data={trend.data} />
+      </Card>
+    </div>
+  );
+}
+
+const APPROVAL_LOG_PAGE_SIZE = 20;
+
+export function PAApprovalLogPage() {
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  const dateLocale = lang === 'ar' ? 'ar-SA' : 'en-SA';
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState<Awaited<ReturnType<typeof dashboardService.paApprovalLog>> | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setData(await dashboardService.paApprovalLog({ page, limit: APPROVAL_LOG_PAGE_SIZE }));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, [page]);
+
+  const rows = data?.items ?? [];
+
+  return (
+    <div className="space-y-4">
+      <Notice icon="📋">{t('pa.approvalLogNotice')}</Notice>
+      <Card title={`📋 ${t('pa.approvalLog')}`} noPadding>
+        <DataTable
+          columns={[
+            {
+              key: 'when',
+              header: t('common.date'),
+              render: (row) => new Date(row.createdAt).toLocaleString(dateLocale),
+              exportValue: (row) => new Date(row.createdAt).toLocaleString(dateLocale),
+            },
+            {
+              key: 'who',
+              header: t('pa.approver'),
+              render: (row) => userName(row.user, lang),
+              exportValue: (row) => userName(row.user, lang),
+            },
+            {
+              key: 'action',
+              header: t('pa.action'),
+              render: (row) => row.action,
+              exportValue: (row) => row.action,
+            },
+            {
+              key: 'target',
+              header: t('pa.approvalTarget'),
+              render: (row) => {
+                if (row.custody?.custodyNumber) {
+                  return `${row.custody.custodyNumber} — ${userName(row.custody.holder, lang)}`;
+                }
+                if (row.invoice?.referenceNumber) {
+                  const custodyNo = typeof row.invoice.custody === 'object' ? row.invoice.custody?.custodyNumber : '';
+                  return custodyNo
+                    ? `${row.invoice.referenceNumber} (${custodyNo})`
+                    : row.invoice.referenceNumber;
+                }
+                return '—';
+              },
+              exportValue: (row) => row.custody?.custodyNumber || row.invoice?.referenceNumber || '',
+            },
+            {
+              key: 'outcome',
+              header: t('common.status'),
+              render: (row) => (
+                <StatusChip
+                  status={row.outcome === 'rejected' ? 'pm_rejected' : 'pm_approved'}
+                  label={row.outcome === 'rejected' ? t('common.reject') : t('common.approve')}
+                />
+              ),
+              exportValue: (row) => (row.outcome === 'rejected' ? t('common.reject') : t('common.approve')),
+            },
+          ]}
+          data={rows}
+          loading={loading}
+          onRefresh={load}
+          emptyText={t('common.noData')}
+          exportFilename="pa-approval-log"
+          exportTitle={t('pa.approvalLog')}
+          exportLang={lang}
+        />
+        {(data?.totalPages ?? 1) > 1 && (
+          <Pagination
+            page={page}
+            totalPages={data?.totalPages ?? 1}
+            total={data?.total ?? 0}
+            pageSize={APPROVAL_LOG_PAGE_SIZE}
+            onPageChange={setPage}
+          />
+        )}
       </Card>
     </div>
   );

@@ -20,6 +20,7 @@ export interface User {
   name: string;
   nameEn?: string;
   email: string;
+  alternateEmail?: string;
   role: Role;
   language: 'ar' | 'en';
   isActive: boolean;

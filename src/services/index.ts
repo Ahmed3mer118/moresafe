@@ -348,6 +348,26 @@ export class DashboardService {
     }>('/dashboard/project-manager');
   }
 
+  paApprovalLog(params?: { page?: number; limit?: number }) {
+    const q = params ? `?${new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]))}` : '';
+    return apiClient.get<{
+      items: {
+        _id: string;
+        action: string;
+        actionEn?: string;
+        outcome: 'approved' | 'rejected';
+        createdAt: string;
+        user?: User;
+        custody?: Custody | null;
+        invoice?: Invoice & { approvedBy?: User } | null;
+      }[];
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+    }>(`/dashboard/project-accountant/approval-log${q}`);
+  }
+
   notifications() {
     return apiClient.get<{ notifications: Notification[]; unread: number }>(
       '/notifications'
