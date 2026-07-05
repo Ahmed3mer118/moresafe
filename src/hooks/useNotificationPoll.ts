@@ -13,7 +13,14 @@ export function useNotificationSync(
 
   useEffect(() => {
     if (!enabled) return;
-    dashboardService.notifications().then(onData).catch(() => {});
+    const controller = new AbortController();
+    dashboardService
+      .notifications({ page: 1, limit: 20 }, { signal: controller.signal })
+      .then(onData)
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+      });
+    return () => controller.abort();
   }, [enabled, notifTick, onData]);
 
   useEffect(() => {
@@ -25,7 +32,11 @@ export function useNotificationSync(
         return;
       }
       if (hiddenAt.current && Date.now() - hiddenAt.current > 60_000) {
-        dashboardService.notifications().then(onData).catch(() => {});
+        const controller = new AbortController();
+        dashboardService
+          .notifications({ page: 1, limit: 20 }, { signal: controller.signal })
+          .then(onData)
+          .catch(() => {});
       }
     };
 

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { FormField, inputClass, selectClass } from '../ui/FormField';
+import { ImageLightbox } from '../ui/ImageLightbox';
 import { useUi } from '../../context/UiContext';
 import { custodyService, invoiceService, projectService } from '../../services';
 import type { Project } from '../../types';
@@ -50,6 +51,7 @@ export function InvoiceUploadModal({
   const [currentPreview, setCurrentPreview] = useState<string | null>(null);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
   const [form, setForm] = useState(EMPTY_INVOICE_FORM);
+  const [previewLightbox, setPreviewLightbox] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
@@ -70,6 +72,7 @@ export function InvoiceUploadModal({
     setQueueTotal(0);
     setLineItems([]);
     setForm(EMPTY_INVOICE_FORM);
+    setPreviewLightbox(false);
   };
 
   const resolveCustodyForUpload = async (pid: string, preferredCustodyId?: string) => {
@@ -89,10 +92,11 @@ export function InvoiceUploadModal({
           return;
         }
       }
-      const list = await custodyService.list({ projectId: pid });
+      const list = await custodyService.list({ projectId: pid, limit: 100, page: 1 });
+      const rows = list.items;
       const match =
-        (preferredCustodyId && list.find((c) => c._id === preferredCustodyId && canUploadToCustody(c.status)))
-        || list.find((c) => canUploadToCustody(c.status));
+        (preferredCustodyId && rows.find((c) => c._id === preferredCustodyId && canUploadToCustody(c.status)))
+        || rows.find((c) => canUploadToCustody(c.status));
       if (match) {
         setActiveCustodyId(match._id);
       } else {
@@ -109,14 +113,14 @@ export function InvoiceUploadModal({
     resetUpload();
     const boot = async () => {
       try {
-        const [projs, custodyResult] = await Promise.all([
-          projectService.list().catch(() => [] as Project[]),
+        const [projsRes, custodyResult] = await Promise.all([
+          projectService.list({ limit: 200, page: 1 }).catch(() => ({ items: [] as Project[] })),
           initialCustodyId
             ? custodyService.get(initialCustodyId).catch(() => null)
             : Promise.resolve(null),
         ]);
 
-        let merged = [...projs];
+        let merged = [...projsRes.items];
         if (custodyResult?.project && typeof custodyResult.project === 'object') {
           const cp = custodyResult.project as Project;
           const cid = entityId(cp);
@@ -229,6 +233,9 @@ export function InvoiceUploadModal({
       invoiceDate: new Date().toISOString().slice(0, 10),
     });
     setCurrentFromFile(remaining[0]);
+    if (remaining[0] && projectId) {
+      await scanFileForForm(remaining[0], { silent: true });
+    }
   };
 
   const addFiles = (incoming: FileList | File[]) => {
@@ -241,6 +248,7 @@ export function InvoiceUploadModal({
 
     if (wasEmpty && list[0]) {
       setCurrentFromFile(list[0]);
+      if (projectId) void scanFileForForm(list[0], { silent: true });
     }
   };
 
@@ -431,9 +439,31 @@ export function InvoiceUploadModal({
             {currentFile.type === 'application/pdf' ? (
               <div className="p-10 text-center text-muted">📄 {currentFile.name}</div>
             ) : (
-              <img src={currentPreview} alt="" className="w-full max-h-64 object-contain bg-white" />
+              <button
+                type="button"
+                onClick={() => setPreviewLightbox(true)}
+                className="w-full block bg-white cursor-zoom-in"
+                title={t('pa.image')}
+              >
+                <img
+                  src={currentPreview}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="w-full max-h-64 object-contain"
+                />
+              </button>
             )}
           </div>
+        )}
+
+        {previewLightbox && currentPreview && currentFile?.type !== 'application/pdf' && (
+          <ImageLightbox
+            images={[{ url: currentPreview, filename: currentFile.name, alt: t('pa.image') }]}
+            index={0}
+            onClose={() => setPreviewLightbox(false)}
+            onIndexChange={() => {}}
+          />
         )}
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

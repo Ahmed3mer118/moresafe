@@ -71,7 +71,15 @@ export function LoginPage() {
 
           <div className="px-8 pt-8 pb-6 text-center border-b border-gray-100">
             <div className="inline-flex items-center justify-center w-[150px] max-h-[100px] bg-brand-500 rounded-2xl mb-4">
-              <img src={logo} alt="Moresafe" className="w-full h-full object-cover" />
+              <img
+                src={logo}
+                alt="Moresafe"
+                width={139}
+                height={139}
+                loading="eager"
+                decoding="async"
+                className="w-full h-full object-cover"
+              />
             </div>
             {/* <h1 className="text-2xl font-extrabold text-gray-800 tracking-tight">
               {t('app.name')}

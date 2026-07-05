@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
 import { Card } from '../../components/ui/Card';
@@ -7,22 +8,28 @@ import { DataTable } from '../../components/ui/DataTable';
 import { Notice } from '../../components/ui/Notice';
 import { StatusChip, Amount, Chip } from '../../components/ui/Chip';
 import { FormField, inputClass, selectClass } from '../../components/ui/FormField';
-import { CustodyArchiveCard, JournalTable } from '../../components/ui/JournalBlock';
+import { CustodyArchiveCard, JournalTable, JournalCrossBalance } from '../../components/ui/JournalBlock';
 import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { RejectReasonModal } from '../../components/ui/RejectReasonModal';
 import { InvoiceLineItemsModal } from '../../components/ui/InvoiceLineItemsModal';
+import { Pagination } from '../../components/ui/Pagination';
 import { useFormDraft } from '../../hooks/useFormDraft';
-import { useTableFilter } from '../../hooks/useTableFilter';
+import { useServerDataTable } from '../../hooks/useServerDataTable';
+import { usePaginatedQuery } from '../../hooks/usePaginatedQuery';
+import { useServerTable } from '../../hooks/useServerTable';
+import { useInvalidateQueries } from '../../hooks/useInvalidateQueries';
+import { queryKeys } from '../../lib/queryKeys';
+import { CACHE } from '../../lib/cachePolicy';
+import { refetchVoid } from '../../lib/queryFn';
 import { useUi } from '../../context/UiContext';
 import { dashboardService, custodyService, invoiceService, projectService, userService } from '../../services';
-import type { Custody, Invoice, User, Voucher } from '../../types';
-import { displayInvoicesTotal, financeEligibleInvoices } from '../../utils/custodyHelpers';
-import { formatMoney, projectName, userName, statusLabel, formatDate, assetUrl } from '../../utils/format';
+import type { Custody, Invoice, Voucher } from '../../types';
+import { CustodyReviewCard } from '../../components/custody/CustodyReviewCard';
+import { formatMoney, projectName, userName, statusLabel, formatDate } from '../../utils/format';
 import { exportToCsv } from '../../utils/exportCsv';
 import { showToast } from '../../utils/toast';
 import { PageLoader } from '../../components/ui/PageLoader';
 import { RefreshButton } from '../../components/ui/RefreshButton';
-import { CustodyReviewCard } from '../../components/custody/CustodyReviewCard';
 import { BudgetOverview } from '../../components/budget/BudgetOverview';
 import { summarizeProjects } from '../../utils/budgetHelpers';
 
@@ -79,32 +86,46 @@ export function FinanceHomePage() {
 export function FinanceReviewPage() {
   const { t } = useTranslation();
   const { runAction } = useUi();
-  const [custodies, setCustodies] = useState<Custody[]>([]);
-  const [loading, setLoading] = useState(true);
+  const invalidate = useInvalidateQueries();
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
 
-  const load = () => {
-    setLoading(true);
-    return custodyService.list().then((all) => {
-      const list = all.filter((c) =>
-        (c.invoices ?? []).some((i) => i.status === 'pending_finance'),
-      );
-      setCustodies(list);
-      setSelectedInvoiceIds((prev) => {
-        const valid = new Set<string>();
-        list.forEach((c) =>
-          (c.invoices ?? []).forEach((i) => {
-            if (i.status === 'pending_finance' && prev.has(i._id)) valid.add(i._id);
-          }),
-        );
-        return valid;
-      });
-    }).finally(() => setLoading(false));
-  };
+  const table = useServerTable({ pageSize: 10, extraFilters: { view: 'card' } });
+  const {
+    items: custodies,
+    isLoading,
+    isFetching,
+    isError,
+    refetch,
+    total,
+    totalPages,
+    page,
+    pageSize,
+  } = usePaginatedQuery<Custody>({
+    queryKey: queryKeys.custodies.list(),
+    queryFn: (params, signal) => custodyService.list(params, { signal }),
+    params: table.listParams,
+    ...CACHE.transactional,
+  });
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    setSelectedInvoiceIds((prev) => {
+      const valid = new Set<string>();
+      custodies.forEach((c) =>
+        (c.invoices ?? []).forEach((i) => {
+          if (i.status === 'pending_finance' && prev.has(i._id)) valid.add(i._id);
+        }),
+      );
+      if (valid.size === prev.size && [...valid].every((id) => prev.has(id))) return prev;
+      return valid;
+    });
+  }, [custodies]);
+
+  const displayCustodies = useMemo(
+    () => custodies.filter((c) => (c.invoices ?? []).some((i) => i.status === 'pending_finance')),
+    [custodies],
+  );
 
   const toggleCustody = (_custodyId: string, invoiceIds: string[], checked: boolean) => {
     setSelectedInvoiceIds((prev) => {
@@ -133,7 +154,8 @@ export function FinanceReviewPage() {
     runAction(async () => {
       await invoiceService.batchReview(ids, true);
       setSelectedInvoiceIds(new Set());
-      await load();
+      invalidate.invoices();
+      invalidate.custodies();
     }, { success: t('finance.invoicesApproved', { count: ids.length }) });
   };
 
@@ -143,7 +165,8 @@ export function FinanceReviewPage() {
       await invoiceService.batchReview(ids, false, reason);
       setSelectedInvoiceIds(new Set());
       setRejectOpen(false);
-      await load();
+      invalidate.invoices();
+      invalidate.custodies();
     }, { success: t('finance.invoicesRejected', { count: ids.length }) });
   };
 
@@ -157,7 +180,7 @@ export function FinanceReviewPage() {
             {t('finance.selectedCount', { count: selectedInvoiceIds.size })}
           </span>
           <div className="flex flex-wrap items-center gap-2">
-            <RefreshButton onRefresh={load} loading={loading} />
+            <RefreshButton onRefresh={() => { void refetch(); }} loading={isLoading || isFetching} />
             <Button size="sm" disabled={!selectedInvoiceIds.size} onClick={() => batchReview(true)}>
               {t('finance.approveSelected')}
             </Button>
@@ -168,25 +191,38 @@ export function FinanceReviewPage() {
         </div>
       </Card>
 
-      {loading ? (
+      {isError ? (
+        <Card><Notice variant="error">{t('common.loadFailed', { defaultValue: 'تعذّر تحميل البيانات' })}</Notice></Card>
+      ) : isLoading ? (
         <Card><PageLoader compact /></Card>
-      ) : custodies.length === 0 ? (
+      ) : displayCustodies.length === 0 ? (
         <Card>
           <p className="text-center text-[#64748b] py-10 text-sm">{t('finance.noPendingInvoices')}</p>
         </Card>
       ) : (
-        custodies.map((c) => (
-          <CustodyReviewCard
-            key={c._id}
-            custody={c}
-            onView={setDetailId}
-            selectedInvoiceIds={selectedInvoiceIds}
-            onToggleCustody={toggleCustody}
-            onToggleInvoice={toggleInvoice}
-            reviewStatus="pending_finance"
-            invoiceFilter={(i) => i.status === 'pending_finance'}
-          />
-        ))
+        <>
+          {displayCustodies.map((c) => (
+            <CustodyReviewCard
+              key={c._id}
+              custody={c}
+              onView={setDetailId}
+              selectedInvoiceIds={selectedInvoiceIds}
+              onToggleCustody={toggleCustody}
+              onToggleInvoice={toggleInvoice}
+              reviewStatus="pending_finance"
+              invoiceFilter={(i) => i.status === 'pending_finance'}
+            />
+          ))}
+          {totalPages > 1 && (
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              total={total}
+              pageSize={pageSize}
+              onPageChange={table.setPage}
+            />
+          )}
+        </>
       )}
 
       <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
@@ -196,69 +232,121 @@ export function FinanceReviewPage() {
 }
 
 export function FinanceEntriesPage() {
-  const { t, i18n } = useTranslation();
-  const lang = i18n.language;
+  const { t } = useTranslation();
   const { runAction } = useUi();
-  const [custodies, setCustodies] = useState<Custody[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState('');
+  const invalidate = useInvalidateQueries();
+  const [selectedByCustody, setSelectedByCustody] = useState<Record<string, Set<string>>>({});
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectCustodyId, setRejectCustodyId] = useState<string | null>(null);
 
-  const load = () => {
-    setLoading(true);
-    return custodyService.list()
-      .then((all) =>
-        setCustodies(
-          all.filter(
-            (c) =>
-              c.status === 'pm_approved'
-              || (c.invoices ?? []).some(
-                (i) => i.status === 'pending_finance' || i.status === 'pm_approved',
-              ),
-          ),
-        ),
-      )
-      .finally(() => setLoading(false));
+  const table = useServerTable({ pageSize: 10, extraFilters: { view: 'card' } });
+  const {
+    items: custodies,
+    isLoading,
+    isFetching,
+    isError,
+    refetch,
+    total,
+    totalPages,
+    page,
+    pageSize,
+  } = usePaginatedQuery<Custody>({
+    queryKey: queryKeys.custodies.list(),
+    queryFn: (params, signal) => custodyService.list(params, { signal }),
+    params: table.listParams,
+    ...CACHE.transactional,
+  });
+
+  useEffect(() => {
+    setSelectedByCustody((prev) => {
+      const next: Record<string, Set<string>> = {};
+      custodies.forEach((c) => {
+        const pending = (c.invoices ?? [])
+          .filter((i) => i.status === 'pending_finance')
+          .map((i) => i._id);
+        const kept = prev[c._id]
+          ? [...prev[c._id]].filter((id) => pending.includes(id))
+          : pending;
+        if (kept.length) next[c._id] = new Set(kept);
+      });
+      const prevKeys = Object.keys(prev).sort().join(',');
+      const nextKeys = Object.keys(next).sort().join(',');
+      const prevSig = Object.entries(prev)
+        .map(([k, s]) => `${k}:${[...s].sort().join('|')}`)
+        .sort()
+        .join(';');
+      const nextSig = Object.entries(next)
+        .map(([k, s]) => `${k}:${[...s].sort().join('|')}`)
+        .sort()
+        .join(';');
+      if (prevKeys === nextKeys && prevSig === nextSig) return prev;
+      return next;
+    });
+  }, [custodies]);
+
+  const displayCustodies = useMemo(
+    () => custodies.filter((c) => (c.invoices ?? []).some((i) => i.status === 'pending_finance')),
+    [custodies],
+  );
+
+  const toggleCustody = (custodyId: string, invoiceIds: string[], checked: boolean) => {
+    setSelectedByCustody((prev) => {
+      const next = { ...prev };
+      const set = new Set(next[custodyId] || []);
+      invoiceIds.forEach((id) => (checked ? set.add(id) : set.delete(id)));
+      if (set.size) next[custodyId] = set;
+      else delete next[custodyId];
+      return next;
+    });
   };
 
-  useEffect(() => { load(); }, []);
+  const toggleInvoice = (custodyId: string, id: string) => {
+    setSelectedByCustody((prev) => {
+      const next = { ...prev };
+      const set = new Set(next[custodyId] || []);
+      if (set.has(id)) set.delete(id);
+      else set.add(id);
+      if (set.size) next[custodyId] = set;
+      else delete next[custodyId];
+      return next;
+    });
+  };
 
-  const filtered = useMemo(() => {
-    if (!query.trim()) return custodies;
-    const q = query.toLowerCase();
-    return custodies.filter(
-      (c) =>
-        c.custodyNumber.toLowerCase().includes(q)
-        || projectName(c.project, lang).toLowerCase().includes(q)
-        || (c.invoices ?? []).some(
-          (i) =>
-            i.referenceNumber.toLowerCase().includes(q)
-            || (i.invoiceNumber || '').toLowerCase().includes(q),
-        ),
-    );
-  }, [custodies, query, lang]);
-
-  const settle = (id: string, approved: boolean) => {
+  const settleCustody = (custodyId: string, approved: boolean) => {
+    const ids = [...(selectedByCustody[custodyId] || [])];
+    if (!ids.length) return showToast(t('finance.selectInvoicesFirst'), 'error');
     if (!approved) {
-      setRejectCustodyId(id);
+      setRejectCustodyId(custodyId);
       setRejectOpen(true);
       return;
     }
     runAction(async () => {
-      await custodyService.settle(id, true);
-      load();
+      await custodyService.settle(custodyId, true, undefined, ids);
+      setSelectedByCustody((prev) => {
+        const next = { ...prev };
+        delete next[custodyId];
+        return next;
+      });
+      invalidate.custodies();
+      invalidate.invoices();
     }, { success: t('finance.settledSuccess') });
   };
 
   const confirmReject = (reason: string) => {
     if (!rejectCustodyId) return;
+    const ids = [...(selectedByCustody[rejectCustodyId] || [])];
     runAction(async () => {
-      await custodyService.settle(rejectCustodyId, false, reason);
+      await custodyService.settle(rejectCustodyId, false, reason, ids.length ? ids : undefined);
+      setSelectedByCustody((prev) => {
+        const next = { ...prev };
+        delete next[rejectCustodyId];
+        return next;
+      });
       setRejectOpen(false);
       setRejectCustodyId(null);
-      load();
+      invalidate.custodies();
+      invalidate.invoices();
     }, { success: t('finance.settleRejected') });
   };
 
@@ -269,107 +357,83 @@ export function FinanceEntriesPage() {
       <Card className="!p-0 overflow-hidden">
         <div className="px-4 py-3.5 border-b border-[#e8edf4] bg-gradient-to-r from-[#f8fafc] to-white flex flex-wrap items-center justify-between gap-2">
           <span className="text-sm font-extrabold text-navy">{t('pm.filterCustody')}</span>
-          <RefreshButton onRefresh={load} loading={loading} />
+          <RefreshButton onRefresh={() => { void refetch(); }} loading={isLoading || isFetching} />
         </div>
         <div className="p-4">
           <FormField label={t('common.search')}>
             <input
               className={inputClass}
               placeholder={t('finance.searchCustodyInvoice')}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              value={table.query}
+              onChange={(e) => table.setQuery(e.target.value)}
             />
           </FormField>
-          <p className="text-xs text-muted mt-2">{t('finance.expandCustodyHint')}</p>
         </div>
       </Card>
 
-      {loading ? (
+      {isError ? (
+        <Card><Notice variant="error">{t('common.loadFailed', { defaultValue: 'تعذّر تحميل البيانات' })}</Notice></Card>
+      ) : isLoading ? (
         <Card><PageLoader compact /></Card>
-      ) : filtered.length === 0 ? (
+      ) : displayCustodies.length === 0 ? (
         <Card><p className="text-muted text-sm text-center py-6">{t('finance.noEntries')}</p></Card>
       ) : (
-        filtered.map((c) => {
-          const eligible = financeEligibleInvoices(c.invoices);
-          const spent = displayInvoicesTotal(c);
-          return (
-            <details key={c._id} className="group rounded-2xl border border-[#e3e9f2] bg-white shadow-sm overflow-hidden">
-              <summary className="px-4 py-4 cursor-pointer list-none hover:bg-[#fafbfd] [&::-webkit-details-marker]:hidden">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-2 min-w-0">
-                    <span className="inline-flex px-2.5 py-1 rounded-lg bg-brand-50 border border-brand-200 text-brand-700 text-xs font-bold">
-                      {c.custodyNumber}
-                    </span>
-                    <span className="font-extrabold text-navy text-sm">{projectName(c.project, lang)}</span>
-                    <StatusChip status={c.status} label={statusLabel(c.status, t)} />
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4 text-sm">
-                    <div className="text-center">
-                      <div className="text-[10px] text-muted font-bold">{t('finance.custodyBudget')}</div>
-                      <Amount>{formatMoney(c.amount ?? 0, lang)}</Amount>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-[10px] text-muted font-bold">{t('admin.invoicesTotal')}</div>
-                      <Amount>{formatMoney(spent, lang)}</Amount>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-[10px] text-muted font-bold">{t('nav.invoices')}</div>
-                      <span className="font-bold text-navy">{eligible.length}</span>
-                    </div>
-                    <span className="text-brand-600 text-xs font-bold">▼ {t('finance.invoiceDetails')}</span>
-                  </div>
-                </div>
-              </summary>
+        <>
+          {displayCustodies.map((c) => {
+            const custodySelected = selectedByCustody[c._id] || new Set<string>();
+            const pendingFinance = (c.invoices ?? []).filter((i) => i.status === 'pending_finance');
 
-              <div className="border-t border-[#eef1f6] bg-[#fcfdfe] px-4 py-4 space-y-3">
-                {eligible.length === 0 ? (
-                  <p className="text-center text-muted text-sm py-4">{t('common.noData')}</p>
-                ) : (
-                  eligible.map((inv) => {
-                    const imgUrl = inv.attachments?.[0]?.url || inv.attachmentUrl;
-                    const preview = imgUrl ? assetUrl(imgUrl) : null;
-                    const isPdf = inv.attachments?.[0]?.mimeType?.includes('pdf');
-                    return (
-                      <div
-                        key={inv._id}
-                        className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-[#e8edf4] bg-white"
-                      >
-                        {preview && !isPdf ? (
-                          <button
-                            type="button"
-                            className="shrink-0 w-14 h-14 rounded-lg overflow-hidden border border-[#dde4ee] hover:ring-2 hover:ring-brand-300"
-                            onClick={() => setDetailId(inv._id)}
-                          >
-                            <img src={preview} alt="" className="w-full h-full object-cover" />
-                          </button>
-                        ) : (
-                          <div className="w-14 h-14 rounded-lg bg-[#f1f5f9] grid place-items-center text-xl shrink-0">🧾</div>
-                        )}
-                        <div className="flex-1 min-w-[140px]">
-                          <div className="font-bold text-navy">{inv.referenceNumber}</div>
-                          <div className="text-xs text-muted">{inv.supplier || '—'} · {inv.category || '—'}</div>
-                        </div>
-                        <Amount>{formatMoney(inv.total, lang)}</Amount>
-                        <StatusChip status={inv.status} label={statusLabel(inv.status, t)} />
-                        <Button size="sm" variant="ghost" onClick={() => setDetailId(inv._id)}>
-                          {t('finance.viewInvoiceImage')}
+            return (
+              <div key={c._id} className="space-y-3">
+                <CustodyReviewCard
+                  custody={c}
+                  onView={setDetailId}
+                  selectedInvoiceIds={custodySelected}
+                  onToggleCustody={toggleCustody}
+                  onToggleInvoice={(id) => toggleInvoice(c._id, id)}
+                  reviewStatus="pending_finance"
+                  invoiceFilter={(i) => i.status === 'pending_finance'}
+                />
+
+                {pendingFinance.length > 0 && (
+                  <Card className="!p-0 overflow-hidden">
+                    <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3 border-b border-[#eef1f6] bg-[#fafbfd]">
+                      <span className="text-[11px] text-muted font-bold">
+                        {t('finance.selectedCount', { count: custodySelected.size })}
+                      </span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          disabled={!custodySelected.size}
+                          onClick={() => settleCustody(c._id, true)}
+                        >
+                          {t('finance.postAccrual')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="red"
+                          disabled={!custodySelected.size}
+                          onClick={() => settleCustody(c._id, false)}
+                        >
+                          {t('common.reject')}
                         </Button>
                       </div>
-                    );
-                  })
+                    </div>
+                  </Card>
                 )}
-                <div className="flex flex-wrap gap-2 pt-2 border-t border-[#eef1f6]">
-                  <Button onClick={() => settle(c._id, true)} disabled={!eligible.length}>
-                    {t('finance.postAccrual')}
-                  </Button>
-                  <Button variant="red" onClick={() => settle(c._id, false)} disabled={!eligible.length}>
-                    {t('common.reject')}
-                  </Button>
-                </div>
               </div>
-            </details>
-          );
-        })
+            );
+          })}
+          {totalPages > 1 && (
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              total={total}
+              pageSize={pageSize}
+              onPageChange={table.setPage}
+            />
+          )}
+        </>
       )}
 
       <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
@@ -411,22 +475,38 @@ export function FinanceVouchersPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
   const { runAction } = useUi();
-  const [vouchers, setVouchers] = useState<Voucher[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+  const invalidate = useInvalidateQueries();
   const { form, setForm, clearDraft } = useFormDraft('admin.vouchers', EMPTY_VOUCHER_FORM);
 
-  const load = () => dashboardService.vouchers().then(setVouchers);
-  useEffect(() => {
-    load();
-    userService.list({ role: 'project_accountant' }).then(setUsers);
-  }, []);
+  const usersQuery = useQuery({
+    queryKey: queryKeys.users.list({ role: 'project_accountant', limit: 100 }),
+    queryFn: ({ signal }) => userService.list({ role: 'project_accountant', limit: 100 }, { signal }),
+    ...CACHE.reference,
+  });
+  const users = usersQuery.data?.items ?? [];
+
+  const {
+    table,
+    items: vouchers,
+    total,
+    totalPages,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useServerDataTable<Voucher>({
+    queryKey: queryKeys.dashboard.vouchers(),
+    queryFn: (params, signal) => dashboardService.vouchers(params, { signal }),
+    ...CACHE.transactional,
+  });
 
   const submit = () => {
     if (!form.beneficiaryId || !form.amount) return showToast('اختر المستفيد والمبلغ', 'error');
     runAction(async () => {
       await dashboardService.createVoucher(form);
       clearDraft();
-      load();
+      invalidate.dashboard();
     }, { success: 'تم تسجيل سند الصرف' });
   };
 
@@ -461,7 +541,22 @@ export function FinanceVouchersPage() {
             { key: 'dt', header: t('common.date'), exportHeader: t('common.date'), render: (v) => formatDate(v.voucherDate, i18n.language), exportValue: (v) => formatDate(v.voucherDate, i18n.language) },
           ]}
           data={vouchers}
-          onRefresh={load}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError ? error : undefined}
+          query={table.query}
+          onQueryChange={table.setQuery}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={vouchers.length}
+          total={total}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
           exportFilename="vouchers"
           exportTitle={t('nav.vouchers')}
           exportLang={i18n.language}
@@ -473,39 +568,87 @@ export function FinanceVouchersPage() {
 }
 
 export function FinanceArchivePage() {
-  const { i18n } = useTranslation();
-  const [custodies, setCustodies] = useState<Custody[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = async () => {
-    setLoading(true);
-    try {
-      setCustodies(await dashboardService.settledArchive());
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  const table = useServerTable({ pageSize: 10, extraFilters: { view: 'card' } });
+  const {
+    items: custodies,
+    isLoading,
+    isFetching,
+    isError,
+    refetch,
+    total,
+    totalPages,
+    page,
+    pageSize,
+  } = usePaginatedQuery<Custody>({
+    queryKey: queryKeys.dashboard.settledArchive(),
+    queryFn: (params, signal) => dashboardService.settledArchive(params, { signal }),
+    params: table.listParams,
+    ...CACHE.transactional,
+  });
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Notice icon="🗄️">عهد متسوية مؤرشفة — اضغط للمراجعة: قيد الاستحقاق، قيد الصرف، والفواتير.</Notice>
-        <RefreshButton onRefresh={load} loading={loading} />
+        <Notice icon="🗄️">
+          {lang === 'ar'
+            ? 'عهد مُسوّاة (قيد الاستحقاق مسجّل) — راجع القيود قبل وبعد الصرف.'
+            : 'Settled custodies (accrual posted) — review entries before and after disbursement.'}
+        </Notice>
+        <RefreshButton onRefresh={refetchVoid(refetch)} loading={isLoading || isFetching} />
       </div>
-      {custodies.map((c) => (
-        <CustodyArchiveCard
-          key={c._id}
-          title={`عهدة: ${userName(c.holder, i18n.language)}`}
-          subtitle={`${c.settlementNumber} · ${new Date(c.settledAt || '').toLocaleDateString('ar-SA')} · ${projectName(c.project, i18n.language)}`}
-          total={`${formatMoney(c.spent)} ريال`}
-          status={<StatusChip status="settled" label="تم الصرف والتعويض" />}
-        >
-          {c.accrualEntry && <JournalTable title="استحقاق مشتريات الموقع" tag="قيد استحقاق" lines={c.accrualEntry} />}
-          {c.disbursementEntry && <JournalTable title="إعادة شحن العهدة بنكياً" tag="قيد الصرف" lines={c.disbursementEntry} />}
-        </CustodyArchiveCard>
-      ))}
+      {isError ? (
+        <Card><Notice variant="error">{t('common.loadFailed', { defaultValue: 'تعذّر تحميل البيانات' })}</Notice></Card>
+      ) : isLoading ? (
+        <Card><PageLoader compact /></Card>
+      ) : custodies.length === 0 ? (
+        <Card><p className="text-center text-muted text-sm py-8">{t('common.noData')}</p></Card>
+      ) : (
+        <>
+        {custodies.map((c) => (
+          <CustodyArchiveCard
+            key={c._id}
+            title={`${t('pa.custodyNumber')}: ${c.custodyNumber} — ${userName(c.holder, lang)}`}
+            subtitle={`${c.settlementNumber || '—'} · ${formatDate(c.settledAt || c.updatedAt, lang)} · ${projectName(c.project, lang)}`}
+            total={`${formatMoney(c.approvedSpent ?? c.spent, lang)} ${t('common.sar')}`}
+            status={
+              <StatusChip
+                status={c.status}
+                label={c.status === 'settled' ? (lang === 'ar' ? 'تم الصرف' : 'Disbursed') : (lang === 'ar' ? 'بانتظار الصرف' : 'Awaiting disbursement')}
+              />
+            }
+          >
+            {c.accrualEntry && c.accrualEntry.length > 0 && (
+              <JournalTable
+                lang={lang}
+                title={lang === 'ar' ? 'استحقاق مشتريات الموقع' : 'Site purchases accrual'}
+                tag={lang === 'ar' ? 'قيد استحقاق مسجل' : 'Posted accrual'}
+                lines={c.accrualEntry}
+              />
+            )}
+            {c.disbursementEntry && c.disbursementEntry.length > 0 && (
+              <JournalTable
+                lang={lang}
+                title={lang === 'ar' ? 'إعادة شحن العهدة بنكياً' : 'Bank disbursement'}
+                tag={lang === 'ar' ? 'قيد الصرف' : 'Disbursement'}
+                lines={c.disbursementEntry}
+              />
+            )}
+            {(c.accrualEntry?.length || c.disbursementEntry?.length) ? (
+              <JournalCrossBalance
+                accrualLines={c.accrualEntry ?? []}
+                disbursementLines={c.disbursementEntry ?? []}
+                lang={lang}
+              />
+            ) : null}
+          </CustodyArchiveCard>
+        ))}
+        {total > pageSize && (
+          <Pagination page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={table.setPage} />
+        )}
+        </>
+      )}
     </div>
   );
 }
@@ -513,20 +656,22 @@ export function FinanceArchivePage() {
 export function FinanceTaxPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      setInvoices(await dashboardService.taxCompliance());
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
-  const tf = useTableFilter(invoices, [(i) => i.referenceNumber, (i) => i.supplier || ''], (i) => (i.taxVerified ? 'ok' : 'missing'));
+  const {
+    table,
+    items: invoices,
+    total,
+    totalPages,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useServerDataTable<Invoice>({
+    queryKey: queryKeys.dashboard.taxCompliance(),
+    queryFn: (params, signal) => dashboardService.taxCompliance(params, { signal }),
+    ...CACHE.transactional,
+  });
 
   return (
     <div>
@@ -540,14 +685,23 @@ export function FinanceTaxPage() {
             { key: 'vat', header: t('pa.tax'), exportHeader: t('pa.tax'), render: (i) => String(i.vatAmount ?? ''), exportValue: (i) => String(i.vatAmount ?? '') },
             { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (i) => <StatusChip status={i.taxVerified ? 'active' : 'pm_rejected'} label={i.taxVerified ? (lang === 'ar' ? 'مطابق' : 'Verified') : (lang === 'ar' ? 'رقم ناقص' : 'Missing')} />, exportValue: (i) => (i.taxVerified ? (lang === 'ar' ? 'مطابق' : 'Verified') : (lang === 'ar' ? 'رقم ناقص' : 'Missing')) },
           ]}
-          data={tf.filtered}
-          loading={loading}
-          query={tf.query}
-          onQueryChange={tf.setQuery}
-          onReset={tf.reset}
-          onRefresh={load}
-          shown={tf.shown}
-          total={tf.total}
+          data={invoices}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError ? error : undefined}
+          query={table.query}
+          onQueryChange={table.setQuery}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={invoices.length}
+          total={total}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
           exportFilename="tax-compliance"
           exportTitle={t('nav.tax')}
           exportLang={lang}
@@ -567,14 +721,14 @@ export function FinanceReportsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [s, c, inv] = await Promise.all([
+      const [s, cRes, invRes] = await Promise.all([
         dashboardService.financeReports(),
-        custodyService.list(),
-        invoiceService.list(),
+        custodyService.list({ limit: 100 }),
+        invoiceService.list({ limit: 100 }),
       ]);
       setSummary(s);
-      setCustodies(c);
-      setInvoices(inv);
+      setCustodies(cRes.items ?? []);
+      setInvoices(invRes.items ?? []);
     } finally {
       setLoading(false);
     }
@@ -639,38 +793,45 @@ export function FinanceReportsPage() {
 export function FinanceSuppliersPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
-  const [suppliers, setSuppliers] = useState<{ _id: string; total: number; count: number }[]>([]);
-  const [grandTotal, setGrandTotal] = useState(0);
   const [query, setQuery] = useState('');
   const [selectedSupplier, setSelectedSupplier] = useState<string | null>(null);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [lineItemsInvoice, setLineItemsInvoice] = useState<Invoice | null>(null);
 
-  const [loadingSuppliers, setLoadingSuppliers] = useState(true);
+  const suppliersQuery = useQuery({
+    queryKey: queryKeys.dashboard.financeSuppliers,
+    queryFn: () => dashboardService.financeSuppliers(),
+    ...CACHE.dashboard,
+  });
 
-  const loadSuppliers = () => {
-    setLoadingSuppliers(true);
-    return dashboardService.financeSuppliers()
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setSuppliers(data);
-          setGrandTotal(data.reduce((sum, s) => sum + (s.total || 0), 0));
-        } else {
-          setSuppliers(data?.suppliers ?? []);
-          setGrandTotal(data?.grandTotal ?? 0);
-        }
-      })
-      .catch(() => {
-        setSuppliers([]);
-        setGrandTotal(0);
-      })
-      .finally(() => setLoadingSuppliers(false));
-  };
+  const suppliers = suppliersQuery.data?.suppliers ?? [];
+  const grandTotal = suppliersQuery.data?.grandTotal ?? 0;
+  const loadingSuppliers = suppliersQuery.isLoading || suppliersQuery.isFetching;
+
+  const {
+    table: invoiceTable,
+    items: invoices,
+    total: invoiceTotal,
+    totalPages: invoiceTotalPages,
+    isLoading: loadingInvoices,
+    isFetching: fetchingInvoices,
+    isError: invoiceError,
+    error: invoiceErr,
+    refetch: refetchInvoices,
+  } = useServerDataTable<Invoice>({
+    queryKey: queryKeys.invoices.list(),
+    queryFn: (params, signal) => invoiceService.list(params, { signal }),
+    enabled: Boolean(selectedSupplier),
+    ...CACHE.transactional,
+  });
 
   useEffect(() => {
-    loadSuppliers();
-  }, []);
+    invoiceTable.setFilter('supplier', selectedSupplier || '');
+  }, [selectedSupplier, invoiceTable.setFilter]);
+
+  const selectedSupplierMeta = useMemo(
+    () => suppliers.find((s) => s._id === selectedSupplier),
+    [suppliers, selectedSupplier],
+  );
 
   const filteredSuppliers = useMemo(() => {
     const list = suppliers ?? [];
@@ -687,37 +848,13 @@ export function FinanceSuppliersPage() {
   const openSupplier = (name: string) => {
     setSelectedSupplier(name);
     setLineItemsInvoice(null);
-    setLoadingInvoices(true);
-    invoiceService
-      .list({ supplier: name })
-      .then(setInvoices)
-      .finally(() => setLoadingInvoices(false));
+    invoiceTable.reset();
   };
-
-  const reloadSupplierInvoices = () => {
-    if (!selectedSupplier) return;
-    setLoadingInvoices(true);
-    invoiceService
-      .list({ supplier: selectedSupplier })
-      .then(setInvoices)
-      .finally(() => setLoadingInvoices(false));
-  };
-
-  const invoiceTf = useTableFilter(
-    invoices,
-    [
-      (i) => i.referenceNumber,
-      (i) => i.invoiceNumber || '',
-      (i) => i.category || '',
-      (i) => projectName(i.project, lang),
-    ],
-    (i) => i.status,
-  );
 
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <RefreshButton onRefresh={loadSuppliers} loading={loadingSuppliers} />
+        <RefreshButton onRefresh={() => { void suppliersQuery.refetch(); }} loading={loadingSuppliers} />
       </div>
       <StatsGrid>
         <StatCard icon="🏪" label={t('finance.supplierCount')} value={(suppliers ?? []).length} color="blue" />
@@ -740,7 +877,7 @@ export function FinanceSuppliersPage() {
                 className="border-none outline-none bg-transparent text-sm w-full font-[inherit]"
               />
             </div>
-            <RefreshButton variant="icon" onRefresh={loadSuppliers} loading={loadingSuppliers} />
+            <RefreshButton variant="icon" onRefresh={() => { void suppliersQuery.refetch(); }} loading={loadingSuppliers} />
           </div>
           <div className="max-h-[520px] overflow-y-auto divide-y divide-[#eef1f6]">
             {filteredSuppliers.length === 0 ? (
@@ -774,16 +911,16 @@ export function FinanceSuppliersPage() {
         <Card className="xl:col-span-8" title={selectedSupplier ? `📄 ${selectedSupplier}` : t('finance.selectSupplierHint')} noPadding>
           {!selectedSupplier ? (
             <p className="text-center text-muted text-sm py-16">{t('finance.selectSupplierHint')}</p>
-          ) : loadingInvoices ? (
+          ) : loadingInvoices && !invoices.length ? (
             <PageLoader compact />
           ) : (
             <>
               <div className="px-4 py-3 border-b border-[#e8edf4] bg-gradient-to-r from-brand-50/40 to-white flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="text-xs text-muted font-bold">{t('finance.supplierBalance')}</div>
-                  <Amount>{formatMoney(invoices.reduce((s, i) => s + i.total, 0), lang)}</Amount>
+                  <Amount>{formatMoney(selectedSupplierMeta?.total ?? 0, lang)}</Amount>
                 </div>
-                <Chip variant="blue">{t('finance.invoiceCountShort', { count: invoices.length })}</Chip>
+                <Chip variant="blue">{t('finance.invoiceCountShort', { count: selectedSupplierMeta?.count ?? invoiceTotal })}</Chip>
               </div>
               <DataTable
                 columns={[
@@ -797,14 +934,24 @@ export function FinanceSuppliersPage() {
                     <Button size="sm" variant="ghost" onClick={() => setLineItemsInvoice(i)}>{t('pa.lineItems')}</Button>
                   ) },
                 ]}
-                data={invoiceTf.filtered}
-                query={invoiceTf.query}
-                onQueryChange={invoiceTf.setQuery}
+                data={invoices}
+                loading={loadingInvoices}
+                fetching={fetchingInvoices}
+                error={invoiceError ? invoiceErr : undefined}
+                query={invoiceTable.query}
+                onQueryChange={invoiceTable.setQuery}
                 searchPlaceholder={t('finance.searchInvoices')}
-                onReset={invoiceTf.reset}
-                onRefresh={reloadSupplierInvoices}
-                shown={invoiceTf.shown}
-                total={invoiceTf.total}
+                onReset={invoiceTable.reset}
+                onRefresh={() => { void refetchInvoices(); }}
+                shown={invoices.length}
+                total={invoiceTotal}
+                pagination={{
+                  page: invoiceTable.page,
+                  totalPages: invoiceTotalPages,
+                  total: invoiceTotal,
+                  pageSize: invoiceTable.pageSize,
+                  onPageChange: invoiceTable.setPage,
+                }}
                 exportFilename={`supplier-${selectedSupplier}`}
                 exportTitle={`${t('nav.suppliers')} — ${selectedSupplier}`}
                 exportLang={lang}

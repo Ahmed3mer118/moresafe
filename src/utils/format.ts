@@ -5,7 +5,8 @@ export function entityId(e?: { _id?: string; id?: string } | null) {
 
 export function formatMoney(n: number, lang = 'ar') {
   return new Intl.NumberFormat(lang === 'ar' ? 'ar-SA' : 'en-SA', {
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(n);
 }
 

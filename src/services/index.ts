@@ -1,5 +1,7 @@
 import { apiClient, ApiError } from '../core/ApiClient';
 import type { User, Project, Custody, Invoice, Notification, Voucher, CustodyTransaction } from '../types';
+import type { ListQueryParams, PaginatedResponse } from '../types/api';
+import { toSearchParams } from '../types/api';
 
 export class AuthService {
   async login(email: string, password: string) {
@@ -9,8 +11,8 @@ export class AuthService {
     );
   }
 
-  async me() {
-    return apiClient.get<{ user: User; dashboard: string }>('/auth/me');
+  async me(init?: RequestInit) {
+    return apiClient.get<{ user: User; dashboard: string }>('/auth/me', init);
   }
 
   async updateProfile(data: Partial<User>) {
@@ -33,8 +35,8 @@ export interface BudgetSummary {
 }
 
 export class ProjectService {
-  list() {
-    return apiClient.get<Project[]>('/projects');
+  list(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<Project>>(`/projects${toSearchParams(params)}`, init);
   }
 
   get(id: string) {
@@ -55,9 +57,8 @@ export class ProjectService {
 }
 
 export class CustodyService {
-  list(params?: Record<string, string>) {
-    const q = params ? `?${new URLSearchParams(params)}` : '';
-    return apiClient.get<Custody[]>(`/custodies${q}`);
+  list(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<Custody>>(`/custodies${toSearchParams(params)}`, init);
   }
 
   async getOpen() {
@@ -87,8 +88,11 @@ export class CustodyService {
     return apiClient.get<CustodyTransaction[]>(`/custodies/${id}/transactions`);
   }
 
-  myTransactions() {
-    return apiClient.get<(CustodyTransaction & { custodyNumber?: string })[]>('/custodies/my-transactions');
+  myTransactions(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<CustodyTransaction & { custodyNumber?: string }>>(
+      `/custodies/my-transactions${toSearchParams(params)}`,
+      init,
+    );
   }
 
   disbursementQueue() {
@@ -107,8 +111,8 @@ export class CustodyService {
     return apiClient.post<Custody>(`/custodies/${id}/pm-approve`, { approved, reason });
   }
 
-  settle(id: string, approved: boolean, reason?: string) {
-    return apiClient.post<Custody>(`/custodies/${id}/settle`, { approved, reason });
+  settle(id: string, approved: boolean, reason?: string, invoiceIds?: string[]) {
+    return apiClient.post<Custody>(`/custodies/${id}/settle`, { approved, reason, invoiceIds });
   }
 
   cycleStats() {
@@ -121,17 +125,18 @@ export class CustodyService {
     return apiClient.patch<Custody>(`/custodies/${id}`, data);
   }
 
-  adminTransactions() {
-    return apiClient.get<(CustodyTransaction & { custodyNumber?: string; project?: Project; holder?: User })[]>(
-      '/admin/custody-transactions',
+  adminTransactions(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<CustodyTransaction & { custodyNumber?: string; project?: Project; holder?: User }>>(
+      `/admin/custody-transactions${toSearchParams(params)}`,
+      init,
     );
   }
+
 }
 
 export class InvoiceService {
-  list(params?: Record<string, string>) {
-    const q = params ? `?${new URLSearchParams(params)}` : '';
-    return apiClient.get<Invoice[]>(`/invoices${q}`);
+  list(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<Invoice>>(`/invoices${toSearchParams(params)}`, init);
   }
 
   get(id: string) {
@@ -174,12 +179,12 @@ export class InvoiceService {
     });
   }
 
-  rejected() {
-    return apiClient.get<Invoice[]>('/invoices/rejected');
+  rejected(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<Invoice>>(`/invoices/rejected${toSearchParams(params)}`, init);
   }
 
-  pendingFinance() {
-    return apiClient.get<Invoice[]>('/invoices/pending-finance');
+  pendingFinance(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<Invoice>>(`/invoices/pending-finance${toSearchParams(params)}`, init);
   }
 
   scan(file: File) {
@@ -193,9 +198,8 @@ export class InvoiceService {
 }
 
 export class UserService {
-  list(params?: Record<string, string>) {
-    const q = params ? `?${new URLSearchParams(params)}` : '';
-    return apiClient.get<User[]>(`/users${q}`);
+  list(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<User>>(`/users${toSearchParams(params)}`, init);
   }
 
   create(data: Record<string, unknown>) {
@@ -237,7 +241,7 @@ export class DashboardService {
     }>('/dashboard/admin/analytics');
   }
 
-  adminReports(projectId?: string) {
+  adminReports(projectId?: string, init?: RequestInit) {
     const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
     return apiClient.get<{
       byManager: {
@@ -286,7 +290,7 @@ export class DashboardService {
         overBudgetCount: number;
         invoiceCount: number;
       };
-    }>(`/dashboard/admin/reports${q}`);
+    }>(`/dashboard/admin/reports${q}`, init);
   }
 
   finance() {
@@ -348,50 +352,49 @@ export class DashboardService {
     }>('/dashboard/project-manager');
   }
 
-  paApprovalLog(params?: { page?: number; limit?: number }) {
-    const q = params ? `?${new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]))}` : '';
+  paApprovalLog(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<{
+      _id: string;
+      action: string;
+      actionEn?: string;
+      outcome: 'approved' | 'rejected';
+      createdAt: string;
+      user?: User;
+      custody?: Custody | null;
+      invoice?: Invoice & { approvedBy?: User } | null;
+    }>>(`/dashboard/project-accountant/approval-log${toSearchParams(params)}`, init);
+  }
+
+  notifications(params?: ListQueryParams, init?: RequestInit) {
     return apiClient.get<{
-      items: {
-        _id: string;
-        action: string;
-        actionEn?: string;
-        outcome: 'approved' | 'rejected';
-        createdAt: string;
-        user?: User;
-        custody?: Custody | null;
-        invoice?: Invoice & { approvedBy?: User } | null;
-      }[];
+      notifications: Notification[];
+      unread: number;
+      items: Notification[];
       total: number;
       page: number;
       limit: number;
       totalPages: number;
-    }>(`/dashboard/project-accountant/approval-log${q}`);
-  }
-
-  notifications() {
-    return apiClient.get<{ notifications: Notification[]; unread: number }>(
-      '/notifications'
-    );
+    }>(`/notifications${toSearchParams(params)}`, init);
   }
 
   markRead(id: string) {
     return apiClient.patch(`/notifications/${id}/read`);
   }
 
-  vouchers() {
-    return apiClient.get<Voucher[]>('/admin/vouchers');
+  vouchers(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<Voucher>>(`/admin/vouchers${toSearchParams(params)}`, init);
   }
 
   createVoucher(data: Record<string, unknown>) {
     return apiClient.post<Voucher>('/admin/vouchers', data);
   }
 
-  settledArchive() {
-    return apiClient.get<Custody[]>('/archive/settled');
+  settledArchive(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<Custody>>(`/archive/settled${toSearchParams(params)}`, init);
   }
 
-  taxCompliance() {
-    return apiClient.get<Invoice[]>('/tax/compliance');
+  taxCompliance(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<Invoice>>(`/tax/compliance${toSearchParams(params)}`, init);
   }
 
   settings() {
@@ -402,44 +405,11 @@ export class DashboardService {
     return apiClient.patch<{ companyName?: string; taxNumber?: string; primaryColor?: string }>('/settings', data);
   }
 
-  activityLogs(params?: { page?: number; limit?: number }) {
-    const page = params?.page ?? 1;
-    const limit = params?.limit ?? 15;
-    const q = new URLSearchParams();
-    q.set('page', String(page));
-    q.set('limit', String(limit));
-
-    return apiClient
-      .get<
-        | { action?: string; createdAt?: string }[]
-        | {
-            items: { action?: string; createdAt?: string }[];
-            total: number;
-            page: number;
-            limit: number;
-            totalPages: number;
-          }
-      >(`/activity-logs?${q}`)
-      .then((raw) => {
-        if (Array.isArray(raw)) {
-          const start = (page - 1) * limit;
-          const items = raw.slice(start, start + limit);
-          return {
-            items,
-            total: raw.length,
-            page,
-            limit,
-            totalPages: Math.max(1, Math.ceil(raw.length / limit)),
-          };
-        }
-        return {
-          items: raw.items ?? [],
-          total: raw.total ?? raw.items?.length ?? 0,
-          page: raw.page ?? page,
-          limit: raw.limit ?? limit,
-          totalPages: raw.totalPages ?? 1,
-        };
-      });
+  activityLogs(params?: ListQueryParams, init?: RequestInit) {
+    return apiClient.get<PaginatedResponse<{ action?: string; createdAt?: string }>>(
+      `/activity-logs${toSearchParams(params)}`,
+      init,
+    );
   }
 }
 

@@ -14,6 +14,9 @@ import { JournalTransactionsList } from '../../components/custody/JournalTransac
 import { CycleFlow } from '../../components/ui/CycleFlow';
 import { RefreshButton } from '../../components/ui/RefreshButton';
 import { useUi } from '../../context/UiContext';
+import { useServerDataTable } from '../../hooks/useServerDataTable';
+import { queryKeys } from '../../lib/queryKeys';
+import { CACHE } from '../../lib/cachePolicy';
 import { custodyService } from '../../services';
 import type { Custody, CustodyTransaction, Invoice } from '../../types';
 import { formatMoney, projectName, statusLabel, formatDate, userName, entityId } from '../../utils/format';
@@ -48,29 +51,25 @@ export function PACustodyListPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
   const navigate = useNavigate();
-  const [custodies, setCustodies] = useState<Custody[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'active' | 'all'>('active');
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      setCustodies(await custodyService.list());
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const rows = useMemo(() => {
-    if (filter === 'active') {
-      return custodies.filter((c) =>
-        ['open', 'closed', 'pm_approved', 'finance_pending', 'pm_rejected', 'finance_rejected', 'settled'].includes(c.status),
-      );
-    }
-    return custodies;
-  }, [custodies, filter]);
+  const {
+    table,
+    items,
+    total,
+    totalPages,
+    page,
+    pageSize,
+    isLoading,
+    isFetching,
+    isError,
+    refetch,
+  } = useServerDataTable<Custody>({
+    queryKey: queryKeys.custodies.list(),
+    queryFn: (params, signal) => custodyService.list({ ...params, view: 'table' }, { signal }),
+    extraFilters: { group: 'active' },
+    staleTime: CACHE.transactional.staleTime,
+    gcTime: CACHE.transactional.gcTime,
+  });
 
   const columns = useMemo(
     () => [
@@ -144,9 +143,11 @@ export function PACustodyListPage() {
             <button
               key={key}
               type="button"
-              onClick={() => setFilter(key)}
+              onClick={() => table.setFilter('group', key === 'all' ? '' : key)}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                filter === key ? 'bg-brand-500 text-white' : 'bg-[#f7f9fc] text-muted hover:bg-brand-50'
+                (key === 'all' && !table.filters.group) || (key === 'active' && table.filters.group === 'active')
+                  ? 'bg-brand-500 text-white'
+                  : 'bg-[#f7f9fc] text-muted hover:bg-brand-50'
               }`}
             >
               {t(`pa.custodyFilter.${key}`)}
@@ -155,9 +156,24 @@ export function PACustodyListPage() {
         </div>
         <DataTable
           columns={columns}
-          data={rows}
-          loading={loading}
-          onRefresh={load}
+          data={items}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError}
+          query={table.query}
+          onQueryChange={table.setQuery}
+          searchPlaceholder={t('common.search')}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={items.length}
+          total={total}
+          pagination={{
+            page,
+            totalPages,
+            total,
+            pageSize,
+            onPageChange: table.setPage,
+          }}
           emptyText={t('common.noData')}
           exportFilename="my-custodies"
           exportTitle={t('pa.myCustodies')}
@@ -493,19 +509,36 @@ export function PACustodyDetailPage() {
 }
 
 export function PATransactionsPage() {
-  const [rows, setRows] = useState<CustodyTransaction[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    table,
+    items,
+    total,
+    totalPages,
+    page,
+    pageSize,
+    isLoading,
+    isFetching,
+    refetch,
+  } = useServerDataTable<CustodyTransaction>({
+    queryKey: queryKeys.custodies.myTransactions(),
+    queryFn: (params, signal) => custodyService.myTransactions(params, { signal }),
+    staleTime: CACHE.transactional.staleTime,
+    gcTime: CACHE.transactional.gcTime,
+  });
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      setRows(await custodyService.myTransactions());
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
-
-  return <JournalTransactionsList rows={rows} loading={loading} onRefresh={load} />;
+  return (
+    <JournalTransactionsList
+      rows={items}
+      loading={isLoading}
+      fetching={isFetching}
+      onRefresh={() => { void refetch(); }}
+      pagination={{
+        page,
+        totalPages,
+        total,
+        pageSize,
+        onPageChange: table.setPage,
+      }}
+    />
+  );
 }

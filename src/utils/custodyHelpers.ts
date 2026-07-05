@@ -1,4 +1,4 @@
-import type { Custody, Invoice } from '../types';
+import type { Custody, Invoice, JournalLine } from '../types';
 
 export function canUploadToCustody(_status: string) {
   return true;
@@ -125,4 +125,89 @@ export async function proofPayloadFromFile(file: File | null) {
   if (!file) return undefined;
   const data = await fileToBase64(file);
   return { data, filename: file.name, mimeType: file.type || 'application/octet-stream' };
+}
+
+/** Preview accrual journal lines for selected invoices (mirrors backend buildAccrualEntry) */
+export function buildAccrualEntryPreview(invoices: Invoice[], holderName: string): JournalLine[] {
+  const lines: JournalLine[] = [];
+  let total = 0;
+
+  for (const inv of invoices) {
+    total += inv.total || 0;
+    lines.push({
+      accountCode: '12011',
+      accountName: `Purchases - ${inv.category || 'Materials'} · ${inv.referenceNumber || inv.invoiceNumber || ''}`.trim(),
+      debit: inv.total || 0,
+      credit: 0,
+    });
+  }
+
+  if (total > 0) {
+    lines.push({
+      accountCode: '23041',
+      accountName: `Engineer custody - ${holderName}`,
+      debit: 0,
+      credit: total,
+    });
+  }
+
+  return lines;
+}
+
+/** Preview disbursement journal lines (mirrors backend buildDisbursementEntry) */
+export function buildDisbursementEntryPreview(total: number, holderName: string): JournalLine[] {
+  if (!total || total <= 0) return [];
+  return [
+    {
+      accountCode: '23041',
+      accountName: `Engineer custody - ${holderName}`,
+      debit: total,
+      credit: 0,
+    },
+    {
+      accountCode: '11010',
+      accountName: 'Bank',
+      debit: 0,
+      credit: total,
+    },
+  ];
+}
+
+export function accrualPreviewForCustody(
+  custody: Custody,
+  selectedInvoiceIds?: Set<string>,
+  status: string = 'pending_finance',
+) {
+  const holderName = typeof custody.holder === 'object' ? (custody.holder.name || custody.holder.nameEn || '') : '';
+  const invoices = (custody.invoices ?? []).filter((i) => i.status === status);
+  const selected = selectedInvoiceIds?.size
+    ? invoices.filter((i) => selectedInvoiceIds.has(i._id))
+    : invoices;
+  return buildAccrualEntryPreview(selected, holderName);
+}
+
+export function disbursementPreviewForCustody(custody: Custody, amount?: number) {
+  const holderName = typeof custody.holder === 'object' ? (custody.holder.name || custody.holder.nameEn || '') : '';
+  const total = amount ?? disbursementTotal(custody);
+  return buildDisbursementEntryPreview(total, holderName);
+}
+
+/** Business amount represented by a balanced journal entry (e.g. invoice total or disbursement amount) */
+export function journalEntryAmount(lines: JournalLine[] = []) {
+  const debit = lines.reduce((s, l) => s + (l.debit || 0), 0);
+  const credit = lines.reduce((s, l) => s + (l.credit || 0), 0);
+  return Math.max(debit, credit);
+}
+
+export type JournalCompareStatus = 'balanced' | 'surplus' | 'deficit';
+
+export function compareAccrualDisbursement(accrual: JournalLine[] = [], disbursement: JournalLine[] = []) {
+  const accrualTotal = journalEntryAmount(accrual);
+  const disburseTotal = journalEntryAmount(disbursement);
+  const delta = accrualTotal - disburseTotal;
+  let status: JournalCompareStatus = 'balanced';
+  if (Math.abs(delta) >= 0.01) {
+    status = delta > 0 ? 'surplus' : 'deficit';
+  }
+  return { accrualTotal, disburseTotal, delta, diff: Math.abs(delta), status };
 }

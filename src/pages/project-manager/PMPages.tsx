@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -10,11 +11,16 @@ import { Notice } from '../../components/ui/Notice';
 import { StatusChip, Amount } from '../../components/ui/Chip';
 import { FormField, inputClass, selectClass } from '../../components/ui/FormField';
 import { ProgressBar } from '../../components/ui/ProgressBar';
-import { ProjectBarChart } from '../../components/charts/DashboardCharts';
+import { ProjectBarChart } from '../../components/charts/LazyCharts';
 import { dashboardService, custodyService, projectService, userService, invoiceService } from '../../services';
 import type { Custody, Project, User, Invoice } from '../../types';
 import { useFormDraft } from '../../hooks/useFormDraft';
-import { useTableFilter } from '../../hooks/useTableFilter';
+import { useServerDataTable } from '../../hooks/useServerDataTable';
+import { usePaginatedQuery } from '../../hooks/usePaginatedQuery';
+import { useServerTable } from '../../hooks/useServerTable';
+import { useInvalidateQueries } from '../../hooks/useInvalidateQueries';
+import { queryKeys } from '../../lib/queryKeys';
+import { CACHE } from '../../lib/cachePolicy';
 import { useUi } from '../../context/UiContext';
 import { formatMoney, projectName, userName, invoiceManagerName, statusLabel, entityId, formatDate, managersFromProjects } from '../../utils/format';
 import { chartOrFallback, formatHours } from '../../utils/chartData';
@@ -158,12 +164,12 @@ export function PMHomePage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [d, p] = await Promise.all([
+      const [d, pRes] = await Promise.all([
         dashboardService.projectManager(),
-        custodyService.list({ status: 'closed' }),
+        custodyService.list({ status: 'closed', view: 'card', limit: 100 }),
       ]);
       setData(d);
-      setPending(p);
+      setPending(pRes.items ?? []);
     } finally {
       setLoading(false);
     }
@@ -215,52 +221,55 @@ export function PMApprovalsPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
   const { runAction } = useUi();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const invalidate = useInvalidateQueries();
   const [projectId, setProjectId] = useState('');
   const [managerId, setManagerId] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => { projectService.list().then(setProjects); }, []);
+  const projectsQuery = useQuery({
+    queryKey: queryKeys.projects.list({ limit: 200 }),
+    queryFn: ({ signal }) => projectService.list({ limit: 200 }, { signal }),
+    ...CACHE.reference,
+  });
+  const projects = projectsQuery.data?.items ?? [];
 
-  const load = () => {
-    const params: Record<string, string> = { status: 'pending_pm' };
-    if (projectId) params.projectId = projectId;
-    if (managerId) params.managerId = managerId;
-    setLoading(true);
-    return invoiceService.list(params).then((list) => {
-      setInvoices(list);
-      setSelectedIds((prev) => {
-        const valid = new Set(list.map((i) => i._id));
-        return new Set([...prev].filter((id) => valid.has(id)));
-      });
-    }).finally(() => setLoading(false));
-  };
+  const {
+    table,
+    items: invoices,
+    total,
+    totalPages,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useServerDataTable<Invoice>({
+    queryKey: queryKeys.invoices.list(),
+    queryFn: (params, signal) => invoiceService.list(params, { signal }),
+    extraFilters: { status: 'pending_pm' },
+    ...CACHE.transactional,
+  });
 
-  useEffect(() => { load(); }, [projectId, managerId]);
+  useEffect(() => {
+    table.setFilter('projectId', projectId);
+    table.setFilter('managerId', managerId);
+  }, [projectId, managerId, table.setFilter]);
+
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const valid = new Set(invoices.map((i) => i._id));
+      return new Set([...prev].filter((id) => valid.has(id)));
+    });
+  }, [invoices]);
 
   const managers = useMemo(
     () => managersFromProjects(projects, lang, projectId || undefined),
     [projects, projectId, lang],
   );
 
-  const tf = useTableFilter(
-    invoices,
-    [
-      (i) => i.referenceNumber,
-      (i) => i.supplier || '',
-      (i) => i.category || '',
-      (i) => projectName(i.project, lang),
-      (i) => invoiceManagerName(i, lang),
-      (i) => i.invoiceNumber || '',
-    ],
-    (i) => i.status,
-  );
-
-  const visibleIds = useMemo(() => tf.filtered.map((i) => i._id), [tf.filtered]);
+  const visibleIds = useMemo(() => invoices.map((i) => i._id), [invoices]);
 
   const toggleOne = (id: string) => {
     setSelectedIds((prev) => {
@@ -289,7 +298,8 @@ export function PMApprovalsPage() {
     runAction(async () => {
       await invoiceService.batchPmReview(ids, true);
       setSelectedIds(new Set());
-      await load();
+      invalidate.invoices();
+      invalidate.custodies();
     }, { success: t('pm.invoicesApproved', { count: ids.length }) });
   };
 
@@ -299,7 +309,8 @@ export function PMApprovalsPage() {
       await invoiceService.batchPmReview(ids, false, reason);
       setSelectedIds(new Set());
       setRejectOpen(false);
-      await load();
+      invalidate.invoices();
+      invalidate.custodies();
     }, { success: t('pm.invoicesRejected', { count: ids.length }) });
   };
 
@@ -348,15 +359,24 @@ export function PMApprovalsPage() {
       <Card title={`🧾 ${t('pm.pendingInvoices')}`} noPadding>
         <DataTable
           columns={columns}
-          data={tf.filtered}
-          loading={loading}
-          query={tf.query}
-          onQueryChange={tf.setQuery}
+          data={invoices}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError ? error : undefined}
+          query={table.query}
+          onQueryChange={table.setQuery}
           searchPlaceholder={t('common.search')}
-          onReset={tf.reset}
-          onRefresh={load}
-          shown={tf.shown}
-          total={tf.total}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={invoices.length}
+          total={total}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total: total,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
           exportFilename="pm-pending-invoices"
           exportTitle={t('pm.pendingInvoices')}
           exportLang={lang}
@@ -384,53 +404,68 @@ export function PMApprovalsPage() {
   );
 }
 
+const ARCHIVED_INVOICE_STATUS_OPTIONS = [
+  'pm_approved',
+  'pm_rejected',
+  'pending_finance',
+  'finance_approved',
+  'finance_rejected',
+  'settled',
+] as const;
+
 export function PMInvoiceArchivePage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [projectId, setProjectId] = useState('');
   const [managerId, setManagerId] = useState('');
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => { projectService.list().then(setProjects); }, []);
+  const projectsQuery = useQuery({
+    queryKey: queryKeys.projects.list({ limit: 200 }),
+    queryFn: ({ signal }) => projectService.list({ limit: 200 }, { signal }),
+    ...CACHE.reference,
+  });
+  const projects = projectsQuery.data?.items ?? [];
 
-  const load = () => {
-    const params: Record<string, string> = { archived: 'true' };
-    if (projectId) params.projectId = projectId;
-    if (managerId) params.managerId = managerId;
-    setLoading(true);
-    return invoiceService.list(params).then(setInvoices).finally(() => setLoading(false));
-  };
+  const {
+    table,
+    items: invoices,
+    total,
+    totalPages,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useServerDataTable<Invoice>({
+    queryKey: queryKeys.invoices.list(),
+    queryFn: (params, signal) => invoiceService.list(params, { signal }),
+    extraFilters: { archived: 'true' },
+    ...CACHE.transactional,
+  });
 
-  useEffect(() => { load(); }, [projectId, managerId]);
+  useEffect(() => {
+    table.setFilter('projectId', projectId);
+    table.setFilter('managerId', managerId);
+  }, [projectId, managerId, table.setFilter]);
+
+  useEffect(() => {
+    if (table.status) {
+      table.setFilter('archived', '');
+    } else {
+      table.setFilter('archived', 'true');
+    }
+  }, [table.status, table.setFilter]);
 
   const managers = useMemo(
     () => managersFromProjects(projects, lang, projectId || undefined),
     [projects, projectId, lang],
   );
 
-  const tf = useTableFilter(
-    invoices,
-    [
-      (i) => i.referenceNumber,
-      (i) => i.supplier || '',
-      (i) => i.category || '',
-      (i) => projectName(i.project, lang),
-      (i) => invoiceManagerName(i, lang),
-      (i) => i.invoiceNumber || '',
-    ],
-    (i) => i.status,
-  );
-
-  const statusOptions = useMemo(() => {
-    const unique = [...new Set(invoices.map((i) => i.status).filter(Boolean))].sort();
-    return [
-      { value: '', label: t('common.all') },
-      ...unique.map((s) => ({ value: s, label: statusLabel(s, t) })),
-    ];
-  }, [invoices, t]);
+  const statusOptions = useMemo(() => [
+    { value: '', label: t('common.all') },
+    ...ARCHIVED_INVOICE_STATUS_OPTIONS.map((s) => ({ value: s, label: statusLabel(s, t) })),
+  ], [t]);
 
   const columns = invoiceColumns(t, i18n, setDetailId);
 
@@ -469,20 +504,29 @@ export function PMInvoiceArchivePage() {
       <Card title={`📄 ${t('pm.invoiceArchive')}`} noPadding>
         <DataTable
           columns={columns}
-          data={tf.filtered}
-          loading={loading}
-          query={tf.query}
-          onQueryChange={tf.setQuery}
+          data={invoices}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError ? error : undefined}
+          query={table.query}
+          onQueryChange={table.setQuery}
           searchPlaceholder={t('common.search')}
           statusFilter={{
-            value: tf.status,
-            onChange: tf.setStatus,
+            value: table.status,
+            onChange: table.setStatus,
             options: statusOptions,
           }}
-          onReset={tf.reset}
-          onRefresh={load}
-          shown={tf.shown}
-          total={tf.total}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={invoices.length}
+          total={total}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
           exportFilename="invoice-archive"
           exportTitle={t('pm.invoiceArchive')}
           exportLang={lang}
@@ -508,15 +552,17 @@ export function PMCustodyApprovalsPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
 
-  useEffect(() => { projectService.list().then(setProjects); }, []);
+  useEffect(() => {
+    projectService.list({ limit: 200 }).then((res) => setProjects(res.items ?? []));
+  }, []);
 
   const load = () => {
-    const params: Record<string, string> = { queueOnly: 'true' };
+    const params: Record<string, string> = { queueOnly: 'true', view: 'card' };
     if (projectId) params.projectId = projectId;
     if (selected) params.holderId = selected;
     setLoading(true);
-    return custodyService.list(params).then((all) => {
-      const list = all.filter((c) =>
+    return custodyService.list(params).then((res) => {
+      const list = (res.items ?? []).filter((c) =>
         (c.invoices ?? []).some((i) => i.status === 'pending_pm'),
       );
       setCustodies(list);
@@ -662,45 +708,49 @@ export function PMCustodyArchivePage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
   const navigate = useNavigate();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [custodies, setCustodies] = useState<Custody[]>([]);
-  const [loading, setLoading] = useState(true);
   const [projectId, setProjectId] = useState('');
   const [managerId, setManagerId] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState<'all' | 'approved' | 'rejected'>('all');
 
-  useEffect(() => { projectService.list().then(setProjects); }, []);
+  const projectsQuery = useQuery({
+    queryKey: queryKeys.projects.list({ limit: 200 }),
+    queryFn: ({ signal }) => projectService.list({ limit: 200 }, { signal }),
+    ...CACHE.reference,
+  });
+  const projects = projectsQuery.data?.items ?? [];
 
-  const load = () => {
-    const params: Record<string, string> = { archived: 'true' };
-    if (projectId) params.projectId = projectId;
-    if (managerId) params.holderId = managerId;
-    setLoading(true);
-    return custodyService.list(params).then(setCustodies).finally(() => setLoading(false));
-  };
+  const {
+    table,
+    items: custodies,
+    total,
+    totalPages,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useServerDataTable<Custody>({
+    queryKey: queryKeys.custodies.list(),
+    queryFn: (params, signal) => custodyService.list(params, { signal }),
+    extraFilters: { archived: 'true', view: 'table' },
+    ...CACHE.transactional,
+  });
 
-  useEffect(() => { load(); }, [projectId, managerId]);
+  useEffect(() => {
+    table.setFilter('projectId', projectId);
+    table.setFilter('holderId', managerId);
+  }, [projectId, managerId, table.setFilter]);
 
   const managers = useMemo(
     () => managersFromProjects(projects, lang, projectId || undefined),
     [projects, projectId, lang],
   );
 
-  const outcomeFiltered = useMemo(() => {
+  const displayCustodies = useMemo(() => {
     if (outcomeFilter === 'all') return custodies;
     const allowed = PA_ARCHIVE_OUTCOME_STATUSES[outcomeFilter];
     return custodies.filter((c) => (allowed as readonly string[]).includes(c.status));
   }, [custodies, outcomeFilter]);
-
-  const tf = useTableFilter(
-    outcomeFiltered,
-    [
-      (c) => c.custodyNumber,
-      (c) => projectName(c.project, lang),
-      (c) => userName(c.holder, lang),
-    ],
-    (c) => c.status,
-  );
 
   return (
     <div className="space-y-4">
@@ -803,15 +853,24 @@ export function PMCustodyArchivePage() {
               ),
             },
           ]}
-          data={tf.filtered}
-          loading={loading}
-          query={tf.query}
-          onQueryChange={tf.setQuery}
+          data={displayCustodies}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError ? error : undefined}
+          query={table.query}
+          onQueryChange={table.setQuery}
           searchPlaceholder={t('common.search')}
-          onReset={tf.reset}
-          onRefresh={load}
-          shown={tf.shown}
-          total={tf.total}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={displayCustodies.length}
+          total={outcomeFilter === 'all' ? total : displayCustodies.length}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total: outcomeFilter === 'all' ? total : displayCustodies.length,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
           exportFilename="custody-archive"
           exportTitle={t('nav.custodyArchive')}
           exportLang={lang}
@@ -873,33 +932,44 @@ export function PMCustodyArchiveDetailPage() {
 
 export function PMProjectsPage() {
   const { t, i18n } = useTranslation();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { runAction } = useUi();
+  const invalidate = useInvalidateQueries();
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [selectedManagerId, setSelectedManagerId] = useState('');
-  const [custodies, setCustodies] = useState<Custody[]>([]);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<Set<string>>(new Set());
+  const [rejectOpen, setRejectOpen] = useState(false);
 
-  useEffect(() => { projectService.list().then(setProjects); }, []);
+  const projectsQuery = useQuery({
+    queryKey: queryKeys.projects.list({ limit: 200 }),
+    queryFn: ({ signal }) => projectService.list({ limit: 200 }, { signal }),
+    ...CACHE.reference,
+  });
+  const projects = projectsQuery.data?.items ?? [];
 
-  const loadAll = async () => {
-    await Promise.all([
-      projectService.list().then(setProjects),
-      loadCustodies(),
-    ]);
-  };
+  const custodyTable = useServerTable({ pageSize: 10, extraFilters: { view: 'card' } });
+  const custodyParams = useMemo(() => ({
+    ...custodyTable.listParams,
+    ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
+    ...(selectedManagerId ? { holderId: selectedManagerId } : {}),
+  }), [custodyTable.listParams, selectedProjectId, selectedManagerId]);
 
-  const loadCustodies = () => {
-    if (!selectedProjectId) {
-      setCustodies([]);
-      return Promise.resolve();
-    }
-    return custodyService.list({ projectId: selectedProjectId }).then(setCustodies);
-  };
-
-  useEffect(() => {
-    setSelectedManagerId('');
-    loadCustodies();
-  }, [selectedProjectId]);
+  const {
+    items: custodies,
+    isLoading: custodiesLoading,
+    isFetching: custodiesFetching,
+    refetch: refetchCustodies,
+    total: custodyTotal,
+    totalPages: custodyTotalPages,
+    page: custodyPage,
+    pageSize: custodyPageSize,
+  } = usePaginatedQuery<Custody>({
+    queryKey: queryKeys.custodies.list(),
+    queryFn: (params, signal) => custodyService.list(params, { signal }),
+    params: custodyParams,
+    enabled: Boolean(selectedProjectId && selectedManagerId),
+    ...CACHE.transactional,
+  });
 
   const selectedProject = projects.find((p) => entityId(p) === selectedProjectId);
 
@@ -908,19 +978,65 @@ export function PMProjectsPage() {
     [projects, selectedProjectId, i18n.language],
   );
 
-  const managerCustodies = useMemo(() => {
-    if (!selectedManagerId) return [];
-    return custodies.filter((c) => entityId(c.holder) === selectedManagerId);
-  }, [custodies, selectedManagerId]);
+  const pendingClosed = custodies.filter((c) =>
+    c.status === 'closed' && (c.invoices ?? []).some((i) => i.status === 'pending_pm'),
+  );
+  const openOnes = custodies.filter((c) => c.status === 'open');
 
-  const pendingClosed = managerCustodies.filter((c) => c.status === 'closed');
-  const openOnes = managerCustodies.filter((c) => c.status === 'open');
+  const toggleCustody = (custodyId: string, invoiceIds: string[], checked: boolean) => {
+    setSelectedInvoiceIds((prev) => {
+      const next = new Set(prev);
+      invoiceIds.forEach((id) => (checked ? next.add(id) : next.delete(id)));
+      return next;
+    });
+    void custodyId;
+  };
+
+  const toggleInvoice = (id: string) => {
+    setSelectedInvoiceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const batchReview = (approved: boolean) => {
+    const ids = [...selectedInvoiceIds];
+    if (!ids.length) return showToast(t('pm.selectInvoicesFirst'), 'error');
+    if (!approved) {
+      setRejectOpen(true);
+      return;
+    }
+    runAction(async () => {
+      await invoiceService.batchPmReview(ids, true);
+      setSelectedInvoiceIds(new Set());
+      invalidate.invoices();
+      invalidate.custodies();
+    }, { success: t('pm.invoicesApproved', { count: ids.length }) });
+  };
+
+  const confirmReject = (reason: string) => {
+    const ids = [...selectedInvoiceIds];
+    runAction(async () => {
+      await invoiceService.batchPmReview(ids, false, reason);
+      setSelectedInvoiceIds(new Set());
+      setRejectOpen(false);
+      invalidate.invoices();
+      invalidate.custodies();
+    }, { success: t('pm.invoicesRejected', { count: ids.length }) });
+  };
+
+  const refreshAll = () => {
+    projectsQuery.refetch();
+    if (selectedProjectId) refetchCustodies();
+  };
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Notice icon="🏗">{t('pm.projectsNotice')}</Notice>
-        <RefreshButton onRefresh={loadAll} />
+        <RefreshButton onRefresh={refreshAll} loading={projectsQuery.isFetching || custodiesFetching} />
       </div>
 
       <Card>
@@ -929,7 +1045,7 @@ export function PMProjectsPage() {
             <select
               className={selectClass}
               value={selectedProjectId}
-              onChange={(e) => setSelectedProjectId(e.target.value)}
+              onChange={(e) => { setSelectedProjectId(e.target.value); setSelectedManagerId(''); }}
             >
               <option value="">{t('pm.selectProject')}</option>
               {projects.map((p) => (
@@ -974,11 +1090,13 @@ export function PMProjectsPage() {
         </Card>
       )}
 
-      {selectedManagerId && pendingClosed.length === 0 && openOnes.length === 0 && (
+      {selectedManagerId && custodiesLoading ? (
+        <Card><PageLoader compact /></Card>
+      ) : selectedManagerId && pendingClosed.length === 0 && openOnes.length === 0 ? (
         <Card>
           <p className="text-center text-muted text-sm py-8">{t('pm.noCustodyForManager')}</p>
         </Card>
-      )}
+      ) : null}
 
       {openOnes.length > 0 && (
         <div className="space-y-3">
@@ -991,11 +1109,43 @@ export function PMProjectsPage() {
 
       {pendingClosed.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-sm font-extrabold text-navy px-1">{t('pm.pendingApproval')}</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+            <h3 className="text-sm font-extrabold text-navy">{t('pm.pendingApproval')}</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-muted font-bold">
+                {t('pm.selectedCount', { count: selectedInvoiceIds.size })}
+              </span>
+              <Button size="sm" disabled={!selectedInvoiceIds.size} onClick={() => batchReview(true)}>
+                {t('pm.approveSelected')}
+              </Button>
+              <Button size="sm" variant="red" disabled={!selectedInvoiceIds.size} onClick={() => batchReview(false)}>
+                {t('pm.rejectSelected')}
+              </Button>
+            </div>
+          </div>
           {pendingClosed.map((c) => (
-            <CustodyReviewCard key={c._id} custody={c} onView={setDetailId} readOnly />
+            <CustodyReviewCard
+              key={c._id}
+              custody={c}
+              onView={setDetailId}
+              selectedInvoiceIds={selectedInvoiceIds}
+              onToggleCustody={toggleCustody}
+              onToggleInvoice={toggleInvoice}
+              reviewStatus="pending_pm"
+              invoiceFilter={(i) => i.status === 'pending_pm'}
+            />
           ))}
         </div>
+      )}
+
+      {selectedManagerId && custodyTotalPages > 1 && (
+        <Pagination
+          page={custodyPage}
+          totalPages={custodyTotalPages}
+          total={custodyTotal}
+          pageSize={custodyPageSize}
+          onPageChange={custodyTable.setPage}
+        />
       )}
 
       <Card title={t('pm.projectSummary')} noPadding>
@@ -1008,7 +1158,7 @@ export function PMProjectsPage() {
             { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (p) => <StatusChip status={p.status} label={statusLabel(p.status, t)} />, exportValue: (p) => statusLabel(p.status, t) },
           ]}
           data={projects}
-          onRefresh={loadAll}
+          onRefresh={() => { void projectsQuery.refetch(); }}
           exportFilename="project-summary"
           exportTitle={t('pm.projectSummary')}
           exportLang={i18n.language}
@@ -1018,44 +1168,82 @@ export function PMProjectsPage() {
       </Card>
 
       <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
+      <RejectReasonModal open={rejectOpen} onClose={() => setRejectOpen(false)} onConfirm={confirmReject} />
     </div>
   );
 }
 
 export function PMEngineersPage() {
   const { t, i18n } = useTranslation();
-  const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState('');
-  const [users, setUsers] = useState<User[]>([]);
-  const [custodies, setCustodies] = useState<Custody[]>([]);
-  const [loading, setLoading] = useState(false);
 
-  useEffect(() => { projectService.list().then(setProjects); }, []);
+  const projectsQuery = useQuery({
+    queryKey: queryKeys.projects.list({ limit: 200 }),
+    queryFn: ({ signal }) => projectService.list({ limit: 200 }, { signal }),
+    ...CACHE.reference,
+  });
+  const projects = projectsQuery.data?.items ?? [];
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, string> = { role: 'project_manager' };
-      if (projectId) params.projectId = projectId;
-      const [u, c] = await Promise.all([
-        userService.list(params),
-        projectId ? custodyService.list({ projectId }) : custodyService.list(),
-      ]);
-      setUsers(u);
-      setCustodies(c);
-    } finally {
-      setLoading(false);
+  const {
+    table,
+    items: users,
+    total,
+    totalPages,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useServerDataTable<User>({
+    queryKey: queryKeys.users.list(),
+    queryFn: (params, signal) => userService.list(params, { signal }),
+    extraFilters: { role: 'project_manager' },
+    ...CACHE.transactional,
+  });
+
+  useEffect(() => {
+    table.setFilter('projectId', projectId);
+  }, [projectId, table.setFilter]);
+
+  const closedCustodiesQuery = useQuery({
+    queryKey: queryKeys.custodies.list({ projectId, status: 'closed', limit: 100 }),
+    queryFn: ({ signal }) => custodyService.list({ projectId, status: 'closed', limit: 100 }, { signal }),
+    ...CACHE.reference,
+  });
+  const openCustodiesQuery = useQuery({
+    queryKey: queryKeys.custodies.list({ projectId, status: 'open', limit: 100 }),
+    queryFn: ({ signal }) => custodyService.list({ projectId, status: 'open', limit: 100 }, { signal }),
+    ...CACHE.reference,
+  });
+
+  const custodyStats = useMemo(() => {
+    const closed = closedCustodiesQuery.data?.items ?? [];
+    const open = openCustodiesQuery.data?.items ?? [];
+    const all = [...closed, ...open];
+    const byHolder = new Map<string, { pending: number; open: number }>();
+    for (const c of all) {
+      const uid = entityId(c.holder);
+      if (!uid) continue;
+      const entry = byHolder.get(uid) || { pending: 0, open: 0 };
+      if (c.status === 'closed') entry.pending += 1;
+      if (c.status === 'open') entry.open += 1;
+      byHolder.set(uid, entry);
     }
-  };
-
-  useEffect(() => { load(); }, [projectId]);
+    return byHolder;
+  }, [closedCustodiesQuery.data?.items, openCustodiesQuery.data?.items]);
 
   const rows = users.map((u) => {
     const uid = entityId(u);
-    const pending = custodies.filter((c) => entityId(c.holder) === uid && c.status === 'closed').length;
-    const open = custodies.filter((c) => entityId(c.holder) === uid && c.status === 'open').length;
-    return { ...u, pending, open };
+    const stats = custodyStats.get(uid);
+    return { ...u, pending: stats?.pending ?? 0, open: stats?.open ?? 0 };
   });
+
+  const refreshAll = () => {
+    projectsQuery.refetch();
+    refetch();
+    closedCustodiesQuery.refetch();
+    openCustodiesQuery.refetch();
+  };
 
   return (
     <div className="space-y-4">
@@ -1069,7 +1257,7 @@ export function PMEngineersPage() {
               ))}
             </select>
           </FormField>
-          <RefreshButton onRefresh={load} loading={loading} />
+          <RefreshButton onRefresh={refreshAll} loading={isLoading || isFetching || closedCustodiesQuery.isFetching || openCustodiesQuery.isFetching} />
         </div>
       </Card>
       <Card noPadding>
@@ -1107,8 +1295,22 @@ export function PMEngineersPage() {
             },
           ]}
           data={rows}
-          loading={loading}
-          onRefresh={load}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError ? error : undefined}
+          query={table.query}
+          onQueryChange={table.setQuery}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={rows.length}
+          total={total}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
           exportFilename="project-managers"
           exportTitle={t('nav.engineers')}
           exportLang={i18n.language}
@@ -1134,11 +1336,11 @@ export function PMEmergencyPage() {
     setLoading(true);
     try {
       const [p, a] = await Promise.all([
-        projectService.list(),
-        userService.list({ role: 'project_manager' }),
+        projectService.list({ limit: 200 }),
+        userService.list({ role: 'project_manager', limit: 100 }),
       ]);
-      setProjects(p);
-      setAccountants(a);
+      setProjects(p.items ?? []);
+      setAccountants(a.items ?? []);
     } finally {
       setLoading(false);
     }
@@ -1225,28 +1427,37 @@ export function PMReportsPage() {
   );
 }
 
-const APPROVAL_LOG_PAGE_SIZE = 20;
-
 export function PAApprovalLogPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
   const dateLocale = lang === 'ar' ? 'ar-SA' : 'en-SA';
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<Awaited<ReturnType<typeof dashboardService.paApprovalLog>> | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      setData(await dashboardService.paApprovalLog({ page, limit: APPROVAL_LOG_PAGE_SIZE }));
-    } finally {
-      setLoading(false);
-    }
+  type ApprovalLogRow = {
+    _id: string;
+    action: string;
+    outcome: 'approved' | 'rejected';
+    createdAt: string;
+    user?: User;
+    custody?: Custody | null;
+    invoice?: Invoice | null;
   };
 
-  useEffect(() => { load(); }, [page]);
-
-  const rows = data?.items ?? [];
+  const {
+    table,
+    items: rows,
+    total,
+    totalPages,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useServerDataTable<ApprovalLogRow>({
+    queryKey: queryKeys.dashboard.paApprovalLog(),
+    queryFn: (params, signal) => dashboardService.paApprovalLog(params, { signal }),
+    pageSize: 20,
+    ...CACHE.logs,
+  });
 
   return (
     <div className="space-y-4">
@@ -1302,22 +1513,24 @@ export function PAApprovalLogPage() {
             },
           ]}
           data={rows}
-          loading={loading}
-          onRefresh={load}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError ? error : undefined}
+          onRefresh={() => { void refetch(); }}
+          shown={rows.length}
+          total={total}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
           emptyText={t('common.noData')}
           exportFilename="pa-approval-log"
           exportTitle={t('pa.approvalLog')}
           exportLang={lang}
         />
-        {(data?.totalPages ?? 1) > 1 && (
-          <Pagination
-            page={page}
-            totalPages={data?.totalPages ?? 1}
-            total={data?.total ?? 0}
-            pageSize={APPROVAL_LOG_PAGE_SIZE}
-            onPageChange={setPage}
-          />
-        )}
       </Card>
     </div>
   );

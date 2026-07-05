@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -10,14 +11,18 @@ import { Pagination } from '../../components/ui/Pagination';
 import { CyclePipeline, CycleFlow } from '../../components/ui/CycleFlow';
 import { StatusChip, RoleChip, Amount } from '../../components/ui/Chip';
 import { FormField, inputClass, selectClass } from '../../components/ui/FormField';
-import { ProjectBarChart } from '../../components/charts/DashboardCharts';
+import { ProjectBarChart } from '../../components/charts/LazyCharts';
 import { BudgetOverview } from '../../components/budget/BudgetOverview';
-import { useTableFilter } from '../../hooks/useTableFilter';
-import { usePagination } from '../../hooks/usePagination';
+import { useServerDataTable } from '../../hooks/useServerDataTable';
+import { usePaginatedQuery } from '../../hooks/usePaginatedQuery';
+import { useInvalidateQueries } from '../../hooks/useInvalidateQueries';
 import { useFormDraft, hasFormDraft } from '../../hooks/useFormDraft';
 import { useUi } from '../../context/UiContext';
 import { useAuth } from '../../context/AuthContext';
 import { dashboardService, userService, projectService, custodyService } from '../../services';
+import { queryKeys } from '../../lib/queryKeys';
+import { bindPaginatedList, refetchVoid } from '../../lib/queryFn';
+import { CACHE } from '../../lib/cachePolicy';
 import type { User, Project, Custody } from '../../types';
 import { formatMoney, projectName, userName, statusLabel } from '../../utils/format';
 import { NotificationsPage } from '../../components/ui/NotificationsPage';
@@ -58,9 +63,18 @@ export function AdminHomePage() {
   const [cycleStats, setCycleStats] = useState({ pm: 0, pa: 0, chief: 0, disbursement: 0, settled: 0 });
   const [statsLoading, setStatsLoading] = useState(true);
   const [activityPage, setActivityPage] = useState(1);
-  const [activityLoading, setActivityLoading] = useState(true);
-  const [activity, setActivity] = useState<{ items: { action?: string; createdAt?: string }[]; total: number; totalPages: number }>({
-    items: [], total: 0, totalPages: 1,
+
+  const {
+    items: activityItems,
+    total: activityTotal,
+    totalPages: activityTotalPages,
+    isLoading: activityLoading,
+    refetch: refetchActivity,
+  } = usePaginatedQuery<{ action?: string; createdAt?: string }>({
+    queryKey: queryKeys.dashboard.activityLogs(),
+    queryFn: bindPaginatedList(dashboardService.activityLogs.bind(dashboardService)),
+    params: { page: activityPage, limit: ACTIVITY_PAGE_SIZE },
+    ...CACHE.logs,
   });
 
   const loadStats = async () => {
@@ -79,29 +93,11 @@ export function AdminHomePage() {
     }
   };
 
-  const loadActivity = async () => {
-    setActivityLoading(true);
-    try {
-      const res = await dashboardService.activityLogs({ page: activityPage, limit: ACTIVITY_PAGE_SIZE });
-      setActivity({
-        items: res.items ?? [],
-        total: res.total ?? 0,
-        totalPages: res.totalPages ?? 1,
-      });
-    } catch {
-      setActivity({ items: [], total: 0, totalPages: 1 });
-    } finally {
-      setActivityLoading(false);
-    }
-  };
-
   const loadAll = async () => {
-    await Promise.all([loadStats(), loadActivity()]);
+    await Promise.all([loadStats(), refetchActivity()]);
   };
 
   useEffect(() => { loadStats(); }, []);
-
-  useEffect(() => { loadActivity(); }, [activityPage]);
 
   return (
     <div className="space-y-5">
@@ -128,10 +124,10 @@ export function AdminHomePage() {
           <div className="p-4">
             <TimelineSkeleton rows={6} />
           </div>
-        ) : (activity.items?.length ?? 0) > 0 ? (
+        ) : (activityItems.length ?? 0) > 0 ? (
           <>
             <div className="p-4">
-              <Timeline items={activity.items.map((l) => ({
+              <Timeline items={activityItems.map((l) => ({
                 title: l.action || '',
                 date: l.createdAt ? new Date(l.createdAt).toLocaleString('ar-SA') : '',
                 done: true,
@@ -139,8 +135,8 @@ export function AdminHomePage() {
             </div>
             <Pagination
               page={activityPage}
-              totalPages={activity.totalPages}
-              total={activity.total}
+              totalPages={activityTotalPages}
+              total={activityTotal}
               pageSize={ACTIVITY_PAGE_SIZE}
               onPageChange={setActivityPage}
             />
@@ -183,11 +179,33 @@ const ROLE_FILTER_OPTIONS = [
 export function AdminUsersPage() {
   const { t, i18n } = useTranslation();
   const { runAction } = useUi();
-  const [users, setUsers] = useState<User[]>([]);
-  const [allProjects, setAllProjects] = useState<Project[]>([]);
+  const invalidate = useInvalidateQueries();
   const [modal, setModal] = useState<'create' | 'edit' | null>(null);
   const [viewUser, setViewUser] = useState<User | null>(null);
   const [editingId, setEditingId] = useState('');
+
+  const { data: userStats } = useQuery({
+    queryKey: queryKeys.users.stats,
+    queryFn: () => userService.stats(),
+    ...CACHE.reference,
+  });
+
+  const { data: allProjectsData } = useQuery({
+    queryKey: queryKeys.projects.list({ limit: 200, page: 1 }),
+    queryFn: ({ signal }) => projectService.list({ limit: 200, page: 1 }, { signal }),
+    ...CACHE.reference,
+  });
+  const allProjects = allProjectsData?.items ?? [];
+
+  const { table, items, total, totalPages, isLoading, isFetching, isError, refetch } = useServerDataTable<User>({
+    queryKey: queryKeys.users.list(),
+    queryFn: (params, signal) => {
+      const { status, ...rest } = params;
+      return userService.list(status ? { ...rest, role: status } : rest, { signal });
+    },
+    pageSize: USERS_PAGE_SIZE,
+    ...CACHE.transactional,
+  });
 
   const draftKey =
     modal === 'edit' && editingId
@@ -201,14 +219,10 @@ export function AdminUsersPage() {
     persist: modal !== null,
   });
 
-  const load = () => userService.list().then(setUsers);
-  useEffect(() => { load(); }, []);
-  useEffect(() => { projectService.list().then(setAllProjects).catch(() => setAllProjects([])); }, []);
-
   useEffect(() => {
     if (modal !== 'edit' || !editingId) return;
     if (hasFormDraft(`admin.users.edit.${editingId}`)) return;
-    const u = users.find((x) => userId(x) === editingId);
+    const u = items.find((x) => userId(x) === editingId);
     if (!u) return;
     setForm({
       name: u.name,
@@ -220,18 +234,17 @@ export function AdminUsersPage() {
       isActive: u.isActive,
       projectIds: (u.projects ?? []).map((p) => String(p._id || p.id)).filter(Boolean),
     });
-  }, [modal, editingId, users, setForm]);
+  }, [modal, editingId, items, setForm]);
 
-  const roleCounts = {
-    acc: users.filter((u) => u.role === 'project_accountant').length,
-    pm: users.filter((u) => u.role === 'project_manager').length,
-    fin: users.filter((u) => u.role === 'chief_accountant').length,
-  };
-
-  const tf = useTableFilter(users, [(u) => u.name, (u) => u.email, (u) => u.role, (u) => t(`roles.${u.role}`)], (u) => u.role);
-  const userPages = usePagination(tf.filtered, USERS_PAGE_SIZE);
-
-  useEffect(() => { userPages.setPage(1); }, [tf.query, tf.status]);
+  const roleCounts = useMemo(() => {
+    const counts = { acc: 0, pm: 0, fin: 0 };
+    for (const s of userStats ?? []) {
+      if (s._id === 'project_accountant') counts.acc = s.count;
+      if (s._id === 'project_manager') counts.pm = s.count;
+      if (s._id === 'chief_accountant') counts.fin = s.count;
+    }
+    return counts;
+  }, [userStats]);
 
   const openCreate = () => {
     setEditingId('');
@@ -271,7 +284,7 @@ export function AdminUsersPage() {
       }
       setModal(null);
       clearDraft();
-      load();
+      await invalidate.users();
     }, { success: modal === 'create' ? 'تم إضافة المستخدم بنجاح' : 'تم تحديث المستخدم' });
 
   return (
@@ -283,7 +296,7 @@ export function AdminUsersPage() {
       </StatsGrid>
       <Card title={t('nav.users')} action={
         <div className="flex items-center gap-2">
-          <RefreshButton onRefresh={load} />
+          <RefreshButton onRefresh={refetchVoid(refetch)} loading={isFetching} />
           <Button size="sm" onClick={openCreate}>＋ {t('common.add')}</Button>
         </div>
       } noPadding>
@@ -315,24 +328,27 @@ export function AdminUsersPage() {
               ),
             },
           ]}
-          data={userPages.paginated}
-          query={tf.query}
-          onQueryChange={tf.setQuery}
-          statusFilter={{ value: tf.status, onChange: tf.setStatus, options: ROLE_FILTER_OPTIONS }}
-          onReset={tf.reset}
-          onRefresh={load}
-          shown={tf.shown}
-          total={tf.total}
+          data={items}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError}
+          query={table.query}
+          onQueryChange={table.setQuery}
+          statusFilter={{ value: table.status, onChange: table.setStatus, options: ROLE_FILTER_OPTIONS }}
+          onReset={table.reset}
+          onRefresh={refetchVoid(refetch)}
+          shown={items.length}
+          total={total}
           exportFilename="users"
           exportTitle={t('nav.users')}
           exportLang={i18n.language}
           exportRowLabel={i18n.language === 'ar' ? 'مستخدم' : 'users'}
           pagination={{
-            page: userPages.page,
-            totalPages: userPages.totalPages,
-            total: userPages.total,
-            pageSize: USERS_PAGE_SIZE,
-            onPageChange: userPages.setPage,
+            page: table.page,
+            totalPages,
+            total,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
           }}
         />
       </Card>
@@ -506,11 +522,29 @@ export function AdminUsersPage() {
 export function AdminProjectsPage() {
   const { t, i18n } = useTranslation();
   const { runAction } = useUi();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [managers, setManagers] = useState<User[]>([]);
-  const [accountants, setAccountants] = useState<User[]>([]);
+  const invalidate = useInvalidateQueries();
   const [modal, setModal] = useState<'create' | 'edit' | null>(null);
   const [editingId, setEditingId] = useState('');
+
+  const { table, items, total, totalPages, isLoading, isFetching, isError, refetch } = useServerDataTable<Project>({
+    queryKey: queryKeys.projects.list(),
+    queryFn: bindPaginatedList(projectService.list.bind(projectService)),
+    ...CACHE.transactional,
+  });
+
+  const { data: managersData } = useQuery({
+    queryKey: queryKeys.users.list({ role: 'project_manager', limit: 200, page: 1 }),
+    queryFn: ({ signal }) => userService.list({ role: 'project_manager', limit: 200, page: 1 }, { signal }),
+    ...CACHE.reference,
+  });
+  const managers = managersData?.items ?? [];
+
+  const { data: accountantsData } = useQuery({
+    queryKey: queryKeys.users.list({ role: 'project_accountant', limit: 200, page: 1 }),
+    queryFn: ({ signal }) => userService.list({ role: 'project_accountant', limit: 200, page: 1 }, { signal }),
+    ...CACHE.reference,
+  });
+  const accountants = accountantsData?.items ?? [];
 
   const draftKey =
     modal === 'edit' && editingId
@@ -523,17 +557,10 @@ export function AdminProjectsPage() {
     persist: modal !== null,
   });
 
-  const load = () => projectService.list().then(setProjects);
-  useEffect(() => {
-    load();
-    userService.list({ role: 'project_manager' }).then(setManagers);
-    userService.list({ role: 'project_accountant' }).then(setAccountants);
-  }, []);
-
   useEffect(() => {
     if (modal !== 'edit' || !editingId) return;
     if (hasFormDraft(`admin.projects.edit.${editingId}`)) return;
-    const p = projects.find((x) => x._id === editingId);
+    const p = items.find((x) => x._id === editingId);
     if (!p) return;
     setForm({
       name: p.name,
@@ -547,7 +574,7 @@ export function AdminProjectsPage() {
           || '',
       ),
     });
-  }, [modal, editingId, projects, setForm]);
+  }, [modal, editingId, items, setForm]);
 
   const openCreate = () => {
     setEditingId('');
@@ -576,14 +603,14 @@ export function AdminProjectsPage() {
       }
       setModal(null);
       clearDraft();
-      load();
+      await invalidate.projects();
     }, { success: modal === 'create' ? 'تم إنشاء المشروع' : 'تم تحديث المشروع' });
 
   return (
     <div className="space-y-4">
       <Card title={t('nav.projects')} action={
         <div className="flex items-center gap-2">
-          <RefreshButton onRefresh={load} />
+          <RefreshButton onRefresh={refetchVoid(refetch)} loading={isFetching} />
           <Button size="sm" onClick={openCreate}>＋ مشروع جديد</Button>
         </div>
       } noPadding>
@@ -611,12 +638,27 @@ export function AdminProjectsPage() {
               <Button size="sm" variant="ghost" onClick={() => openEdit(p)}>{t('common.edit')}</Button>
             ) },
           ]}
-          data={projects}
-          onRefresh={load}
+          data={items}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError}
+          query={table.query}
+          onQueryChange={table.setQuery}
+          onReset={table.reset}
+          onRefresh={refetchVoid(refetch)}
+          shown={items.length}
+          total={total}
           exportFilename="projects"
           exportTitle={t('nav.projects')}
           exportLang={i18n.language}
           exportRowLabel={i18n.language === 'ar' ? 'مشروع' : 'projects'}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
         />
       </Card>
       <Modal
@@ -724,27 +766,26 @@ const CUSTODY_STATUS_OPTIONS = [
 
 export function AdminCyclePage() {
   const { t, i18n } = useTranslation();
-  const [stats, setStats] = useState({ pm: 0, pa: 0, chief: 0, disbursement: 0, settled: 0 });
-  const [custodies, setCustodies] = useState<Custody[]>([]);
-  const [loading, setLoading] = useState(true);
-  const tf = useTableFilter(custodies, [(c) => c.custodyNumber, (c) => projectName(c.project, i18n.language)], (c) => c.status);
+  const { data: stats = { pm: 0, pa: 0, chief: 0, disbursement: 0, settled: 0 }, isFetching: statsFetching, refetch: refetchStats } = useQuery({
+    queryKey: queryKeys.custodies.cycleStats,
+    queryFn: () => custodyService.cycleStats(),
+    ...CACHE.dashboard,
+  });
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [s, c] = await Promise.all([custodyService.cycleStats(), custodyService.list()]);
-      setStats(s);
-      setCustodies(c);
-    } finally {
-      setLoading(false);
-    }
+  const { table, items, total, totalPages, isLoading, isFetching, isError, refetch } = useServerDataTable<Custody>({
+    queryKey: queryKeys.custodies.list(),
+    queryFn: bindPaginatedList(custodyService.list.bind(custodyService)),
+    ...CACHE.transactional,
+  });
+
+  const load = () => {
+    refetchStats();
+    refetch();
   };
-
-  useEffect(() => { load(); }, []);
 
   return (
     <div className="space-y-5">
-      <Card action={<RefreshButton onRefresh={load} loading={loading} />}><CyclePipeline stats={stats} /></Card>
+      <Card action={<RefreshButton onRefresh={load} loading={statsFetching || isFetching} />}><CyclePipeline stats={stats} /></Card>
       <Card title="سجل العهد — تفاصيل الدورة" noPadding>
         <DataTable
           columns={[
@@ -754,19 +795,28 @@ export function AdminCyclePage() {
             { key: 'flow', header: t('nav.cycle'), exportHeader: t('nav.cycle'), render: (c) => <CycleFlow status={c.status} />, exportValue: (c) => statusLabel(c.status, t) },
             { key: 'st', header: t('common.status'), exportHeader: t('common.status'), render: (c) => <StatusChip status={c.status} label={statusLabel(c.status, t)} />, exportValue: (c) => statusLabel(c.status, t) },
           ]}
-          data={tf.filtered}
-          loading={loading}
-          query={tf.query}
-          onQueryChange={tf.setQuery}
-          statusFilter={{ value: tf.status, onChange: tf.setStatus, options: CUSTODY_STATUS_OPTIONS }}
-          onReset={tf.reset}
-          onRefresh={load}
-          shown={tf.shown}
-          total={tf.total}
+          data={items}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError}
+          query={table.query}
+          onQueryChange={table.setQuery}
+          statusFilter={{ value: table.status, onChange: table.setStatus, options: CUSTODY_STATUS_OPTIONS }}
+          onReset={table.reset}
+          onRefresh={refetchVoid(refetch)}
+          shown={items.length}
+          total={total}
           exportFilename="custody-cycle"
           exportTitle={t('nav.cycle')}
           exportLang={i18n.language}
           exportRowLabel={i18n.language === 'ar' ? 'عهدة' : 'custodies'}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
         />
       </Card>
     </div>
@@ -821,38 +871,30 @@ export function AdminSettingsPage() {
 export function AdminLogsPage() {
   const { t } = useTranslation();
   const [logsPage, setLogsPage] = useState(1);
-  const [logsLoading, setLogsLoading] = useState(true);
-  const [logs, setLogs] = useState<{ items: { action?: string; createdAt?: string }[]; total: number; totalPages: number }>({
-    items: [], total: 0, totalPages: 1,
+
+  const {
+    items: logItems,
+    total: logsTotal,
+    totalPages: logsTotalPages,
+    isLoading: logsLoading,
+    isFetching: logsFetching,
+    refetch: refetchLogs,
+  } = usePaginatedQuery<{ action?: string; createdAt?: string }>({
+    queryKey: queryKeys.dashboard.activityLogs(),
+    queryFn: bindPaginatedList(dashboardService.activityLogs.bind(dashboardService)),
+    params: { page: logsPage, limit: ACTIVITY_PAGE_SIZE },
+    ...CACHE.logs,
   });
 
-  const load = async () => {
-    setLogsLoading(true);
-    try {
-      const res = await dashboardService.activityLogs({ page: logsPage, limit: ACTIVITY_PAGE_SIZE });
-      setLogs({
-        items: res.items ?? [],
-        total: res.total ?? 0,
-        totalPages: res.totalPages ?? 1,
-      });
-    } catch {
-      setLogs({ items: [], total: 0, totalPages: 1 });
-    } finally {
-      setLogsLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, [logsPage]);
-
   return (
-    <Card title={t('nav.logs')} action={<RefreshButton onRefresh={load} loading={logsLoading} />} noPadding>
+    <Card title={t('nav.logs')} action={<RefreshButton onRefresh={refetchVoid(refetchLogs)} loading={logsFetching} />} noPadding>
       {logsLoading ? (
         <PageLoader compact />
       ) : (
         <>
           <div className="p-4">
-            {(logs.items?.length ?? 0) > 0 ? (
-              <Timeline items={logs.items.map((l) => ({
+            {(logItems.length ?? 0) > 0 ? (
+              <Timeline items={logItems.map((l) => ({
                 title: l.action || '',
                 date: l.createdAt ? new Date(l.createdAt).toLocaleString('ar-SA') : '',
                 done: true,
@@ -863,8 +905,8 @@ export function AdminLogsPage() {
           </div>
           <Pagination
             page={logsPage}
-            totalPages={logs.totalPages}
-            total={logs.total}
+            totalPages={logsTotalPages}
+            total={logsTotal}
             pageSize={ACTIVITY_PAGE_SIZE}
             onPageChange={setLogsPage}
           />

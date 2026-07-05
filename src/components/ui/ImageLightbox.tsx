@@ -130,6 +130,8 @@ export function ImageLightbox({
         <img
           src={current.url}
           alt={current.alt || current.filename || ''}
+          loading="lazy"
+          decoding="async"
           draggable={false}
           onDoubleClick={() => setZoom((z) => (z > 1 ? 1 : 2.5))}
           className="select-none transition-transform duration-200 ease-out cursor-zoom-in"

@@ -2,22 +2,29 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
+import { useQuery } from '@tanstack/react-query';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { DataTable } from '../../components/ui/DataTable';
 import { StatusChip, Amount, Chip } from '../../components/ui/Chip';
 import { FormField, inputClass, selectClass } from '../../components/ui/FormField';
 import { PageLoader } from '../../components/ui/PageLoader';
+import { Pagination } from '../../components/ui/Pagination';
 import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { Modal } from '../../components/ui/Modal';
 import { ImageLightbox } from '../../components/ui/ImageLightbox';
 import { useUi } from '../../context/UiContext';
+import { useServerDataTable } from '../../hooks/useServerDataTable';
+import { useInvalidateQueries } from '../../hooks/useInvalidateQueries';
+import { useServerTable } from '../../hooks/useServerTable';
+import { queryKeys } from '../../lib/queryKeys';
+import { CACHE } from '../../lib/cachePolicy';
 import { custodyService, projectService, dashboardService, userService } from '../../services';
-import { CustodyArchiveCard, JournalTable } from '../../components/ui/JournalBlock';
+import { CustodyArchiveCard, JournalTable, JournalCrossBalance } from '../../components/ui/JournalBlock';
+import { custodyTotals, proofPayloadFromFile, displayInvoicesTotal, disbursementTotal, disbursementEligibleInvoices, disbursementPreviewForCustody, compareAccrualDisbursement, type JournalCompareStatus } from '../../utils/custodyHelpers';
 import { JournalTransactionsList } from '../../components/custody/JournalTransactionsList';
 import type { Custody, CustodyTransaction, Project, User, Voucher } from '../../types';
 import { formatMoney, projectName, statusLabel, formatDate, entityId, userName, assetUrl } from '../../utils/format';
-import { custodyTotals, proofPayloadFromFile, displayInvoicesTotal, disbursementTotal, disbursementEligibleInvoices } from '../../utils/custodyHelpers';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
 import { Notice } from '../../components/ui/Notice';
 import { RefreshButton } from '../../components/ui/RefreshButton';
@@ -44,16 +51,10 @@ function BalanceIndicator({ custody, lang, t }: { custody: Custody; lang: string
 export function AdminDisbursementPage() {
   const { t, i18n } = useTranslation();
   const { runAction } = useUi();
+  const invalidate = useInvalidateQueries();
   const lang = i18n.language;
   const navigate = useNavigate();
-  const [custodies, setCustodies] = useState<Custody[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [managers, setManagers] = useState<User[]>([]);
-  const [transactions, setTransactions] = useState<(CustodyTransaction & { custodyNumber?: string; project?: Project; holder?: User })[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [txLoading, setTxLoading] = useState(false);
   const [tab, setTab] = useState<'custodies' | 'transactions'>('custodies');
-  const [filter, setFilter] = useState<'all' | 'active' | 'done'>('all');
   const [form, setForm] = useState({ projectId: '', holderId: '', amount: 0, purpose: '' });
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -61,51 +62,44 @@ export function AdminDisbursementPage() {
   const [editForm, setEditForm] = useState({ projectId: '', holderId: '', amount: 0, purpose: '' });
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [c, p, m] = await Promise.all([
-        custodyService.list(),
-        projectService.list(),
-        userService.list({ role: 'project_manager' }),
-      ]);
-      setCustodies(c);
-      setProjects(p);
-      setManagers(m);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const custodyTable = useServerDataTable<Custody>({
+    queryKey: queryKeys.custodies.list(),
+    queryFn: (params, signal) => custodyService.list({ ...params, view: 'table' }, { signal }),
+    staleTime: CACHE.transactional.staleTime,
+    gcTime: CACHE.transactional.gcTime,
+    enabled: tab === 'custodies',
+  });
 
-  const loadTransactions = async () => {
-    setTxLoading(true);
-    try {
-      setTransactions(await custodyService.adminTransactions());
-    } catch {
-      showToast(t('common.noData'), 'error');
-      setTransactions([]);
-    } finally {
-      setTxLoading(false);
-    }
-  };
+  const txTable = useServerDataTable<CustodyTransaction & { custodyNumber?: string; project?: Project; holder?: User }>({
+    queryKey: queryKeys.custodies.adminTransactions(),
+    queryFn: (params, signal) => custodyService.adminTransactions(params, { signal }),
+    staleTime: CACHE.transactional.staleTime,
+    gcTime: CACHE.transactional.gcTime,
+    enabled: tab === 'transactions',
+  });
 
-  useEffect(() => { load(); }, []);
-  useEffect(() => { if (tab === 'transactions') loadTransactions(); }, [tab]);
+  const { data: projectsData } = useQuery({
+    queryKey: queryKeys.projects.list({ limit: 200, page: 1 }),
+    queryFn: ({ signal }) => projectService.list({ limit: 200, page: 1 }, { signal }),
+    staleTime: CACHE.reference.staleTime,
+    gcTime: CACHE.reference.gcTime,
+  });
+  const projects = projectsData?.items ?? [];
+
+  const { data: managersData } = useQuery({
+    queryKey: queryKeys.users.list({ role: 'project_manager', limit: 200, page: 1 }),
+    queryFn: ({ signal }) => userService.list({ role: 'project_manager', limit: 200, page: 1 }, { signal }),
+    staleTime: CACHE.reference.staleTime,
+    gcTime: CACHE.reference.gcTime,
+  });
+  const managers = managersData?.items ?? [];
 
   const selectedProject = projects.find((p) => entityId(p) === form.projectId);
   const defaultManagerId = selectedProject?.manager
     ? entityId(selectedProject.manager as User)
     : '';
 
-  const filtered = useMemo(() => {
-    if (filter === 'active') {
-      return custodies.filter((c) => !['settled', 'pm_rejected', 'finance_rejected'].includes(c.status));
-    }
-    if (filter === 'done') {
-      return custodies.filter((c) => ['settled', 'pm_rejected', 'finance_rejected'].includes(c.status));
-    }
-    return custodies;
-  }, [custodies, filter]);
+  const filtered = custodyTable.items;
 
   const createCustody = () => {
     if (!form.projectId) return showToast(t('admin.pickProject'), 'error');
@@ -123,7 +117,7 @@ export function AdminDisbursementPage() {
         });
         setForm({ projectId: '', holderId: '', amount: 0, purpose: '' });
         setCreateOpen(false);
-        await load();
+        await invalidate.custodies();
       } finally {
         setCreating(false);
       }
@@ -150,7 +144,7 @@ export function AdminDisbursementPage() {
         purpose: editForm.purpose,
       });
       setEditCustody(null);
-      await load();
+      await invalidate.custodies();
     }, { success: t('admin.custodyUpdated') });
   };
 
@@ -243,8 +237,11 @@ export function AdminDisbursementPage() {
           </Button>
         </div>
         <RefreshButton
-          onRefresh={() => (tab === 'transactions' ? loadTransactions() : load())}
-          loading={tab === 'transactions' ? txLoading : loading}
+          onRefresh={() => {
+            if (tab === 'transactions') void txTable.refetch();
+            else void custodyTable.refetch();
+          }}
+          loading={tab === 'transactions' ? txTable.isFetching : custodyTable.isFetching}
         />
       </div>
 
@@ -263,9 +260,11 @@ export function AdminDisbursementPage() {
             <button
               key={key}
               type="button"
-              onClick={() => setFilter(key)}
+              onClick={() => custodyTable.table.setFilter('group', key === 'all' ? '' : key)}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
-                filter === key ? 'bg-brand-500 text-white' : 'bg-[#f7f9fc] text-muted hover:bg-brand-50'
+                (key === 'all' && !custodyTable.table.filters.group) || custodyTable.table.filters.group === key
+                  ? 'bg-brand-500 text-white'
+                  : 'bg-[#f7f9fc] text-muted hover:bg-brand-50'
               }`}
             >
               {t(`admin.filter.${key}`)}
@@ -275,20 +274,43 @@ export function AdminDisbursementPage() {
         <DataTable
           columns={columns}
           data={filtered}
-          loading={loading}
-          onRefresh={load}
-          emptyText={loading ? t('common.loading') : t('common.noData')}
+          loading={custodyTable.isLoading}
+          fetching={custodyTable.isFetching}
+          error={custodyTable.isError}
+          query={custodyTable.table.query}
+          onQueryChange={custodyTable.table.setQuery}
+          searchPlaceholder={t('common.search')}
+          onReset={custodyTable.table.reset}
+          onRefresh={() => { void custodyTable.refetch(); }}
+          shown={filtered.length}
+          total={custodyTable.total}
+          pagination={{
+            page: custodyTable.page,
+            totalPages: custodyTable.totalPages,
+            total: custodyTable.total,
+            pageSize: custodyTable.pageSize,
+            onPageChange: custodyTable.table.setPage,
+          }}
+          emptyText={custodyTable.isLoading ? t('common.loading') : t('common.noData')}
           exportFilename="admin-custodies"
           exportTitle={t('admin.allCustodies')}
         />
       </Card>
       ) : (
       <JournalTransactionsList
-        rows={transactions}
-        loading={txLoading}
-        onRefresh={loadTransactions}
+        rows={txTable.items}
+        loading={txTable.isLoading}
+        fetching={txTable.isFetching}
+        onRefresh={() => { void txTable.refetch(); }}
         showProject
         showManager
+        pagination={{
+          page: txTable.page,
+          totalPages: txTable.totalPages,
+          total: txTable.total,
+          pageSize: txTable.pageSize,
+          onPageChange: txTable.table.setPage,
+        }}
       />
       )}
 
@@ -530,7 +552,8 @@ export function AdminCustodyDetailPage() {
             {custody.status === 'finance_pending' && (
               <div className="space-y-3">
                 <div className="text-sm font-bold text-navy">{t('admin.disburseStepCombined')}</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <FormField label={t('admin.disburseAmountLabel')}>
                     <input
                       className={inputClass}
@@ -610,6 +633,34 @@ export function AdminCustodyDetailPage() {
         />
       </Card>
 
+      {custody.status === 'settled' && (custody.accrualEntry?.length || custody.disbursementEntry?.length) ? (
+        <Card title={lang === 'ar' ? 'القيود المحاسبية' : 'Journal entries'} className="!p-4">
+          {custody.accrualEntry && custody.accrualEntry.length > 0 && (
+            <JournalTable
+              lang={lang}
+              title={lang === 'ar' ? 'استحقاق مشتريات الموقع' : 'Site purchases accrual'}
+              tag={lang === 'ar' ? 'قيد استحقاق' : 'Accrual'}
+              lines={custody.accrualEntry}
+            />
+          )}
+          {custody.disbursementEntry && custody.disbursementEntry.length > 0 && (
+            <JournalTable
+              lang={lang}
+              title={lang === 'ar' ? 'إعادة شحن العهدة بنكياً' : 'Bank disbursement'}
+              tag={lang === 'ar' ? 'قيد الصرف' : 'Disbursement'}
+              lines={custody.disbursementEntry}
+            />
+          )}
+          {(custody.accrualEntry?.length || custody.disbursementEntry?.length) ? (
+            <JournalCrossBalance
+              accrualLines={custody.accrualEntry ?? []}
+              disbursementLines={custody.disbursementEntry ?? []}
+              lang={lang}
+            />
+          ) : null}
+        </Card>
+      ) : null}
+
       <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} />
     </div>
   );
@@ -622,25 +673,51 @@ type AdminReportData = Awaited<ReturnType<typeof dashboardService.adminReports>>
 export function AdminReportsPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
-  const [projects, setProjects] = useState<Project[]>([]);
   const [projectId, setProjectId] = useState('');
   const [tab, setTab] = useState<ReportTab>('manager');
-  const [data, setData] = useState<AdminReportData | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => { projectService.list().then(setProjects); }, []);
+  const { data: projectsData } = useQuery({
+    queryKey: queryKeys.projects.list({ limit: 200, page: 1 }),
+    queryFn: ({ signal }) => projectService.list({ limit: 200, page: 1 }, { signal }),
+    staleTime: CACHE.reference.staleTime,
+    gcTime: CACHE.reference.gcTime,
+  });
+  const projects = projectsData?.items ?? [];
 
-  const load = () => {
-    setLoading(true);
-    return dashboardService.adminReports(projectId || undefined)
-      .then(setData)
-      .finally(() => setLoading(false));
-  };
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
+    queryKey: queryKeys.dashboard.adminReports(projectId),
+    queryFn: ({ signal }) => dashboardService.adminReports(projectId || undefined, { signal }),
+    staleTime: CACHE.dashboard.staleTime,
+    gcTime: CACHE.dashboard.gcTime,
+  });
 
-  useEffect(() => { load(); }, [projectId]);
+  const table = useServerTable();
 
   const nameOf = (row: { name?: string; nameEn?: string }) =>
     lang === 'ar' ? (row.name || row.nameEn || '—') : (row.nameEn || row.name || '—');
+
+  useEffect(() => {
+    table.setPage(1);
+  }, [tab, projectId]);
+
+  const tableRows = useMemo(() => {
+    if (!data) return [];
+    let rows: AdminReportData['byManager'] | AdminReportData['byAccountant'] | AdminReportData['byChief'] | AdminReportData['byProject'];
+    if (tab === 'manager') rows = data.byManager;
+    else if (tab === 'accountant') rows = data.byAccountant;
+    else if (tab === 'chief') rows = data.byChief;
+    else rows = data.byProject;
+
+    const q = table.debouncedQuery.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => nameOf(r).toLowerCase().includes(q));
+  }, [data, tab, table.debouncedQuery, lang]);
+
+  const totalPages = Math.max(1, Math.ceil(tableRows.length / table.pageSize) || 1);
+  const paginatedRows = useMemo(() => {
+    const start = (table.page - 1) * table.pageSize;
+    return tableRows.slice(start, start + table.pageSize);
+  }, [tableRows, table.page, table.pageSize]);
 
   const tabs: { id: ReportTab; label: string }[] = [
     { id: 'manager', label: t('admin.reportManagers') },
@@ -648,14 +725,6 @@ export function AdminReportsPage() {
     { id: 'chief', label: t('admin.reportChief') },
     { id: 'project', label: t('admin.reportProjects') },
   ];
-
-  const tableRows = useMemo(() => {
-    if (!data) return [];
-    if (tab === 'manager') return data.byManager;
-    if (tab === 'accountant') return data.byAccountant;
-    if (tab === 'chief') return data.byChief;
-    return data.byProject;
-  }, [data, tab]);
 
   const columns = useMemo(() => {
     if (tab === 'manager') {
@@ -738,9 +807,24 @@ export function AdminReportsPage() {
       <Card title={tabs.find((x) => x.id === tab)?.label} noPadding>
         <DataTable
           columns={columns as never}
-          data={tableRows as never}
-          loading={loading}
-          onRefresh={load}
+          data={paginatedRows as never}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError}
+          query={table.query}
+          onQueryChange={table.setQuery}
+          searchPlaceholder={t('common.search')}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={paginatedRows.length}
+          total={tableRows.length}
+          pagination={{
+            page: table.page,
+            totalPages,
+            total: tableRows.length,
+            pageSize: table.pageSize,
+            onPageChange: table.setPage,
+          }}
           exportFilename={`admin-report-${tab}`}
           exportTitle={tabs.find((x) => x.id === tab)?.label || t('admin.reports')}
           exportLang={lang}
@@ -751,40 +835,74 @@ export function AdminReportsPage() {
   );
 }
 
+const BALANCE_CHIP: Record<JournalCompareStatus, { ar: string; en: string; variant: 'green' | 'amber' | 'red' }> = {
+  balanced: { ar: 'متوازن ✓', en: 'Balanced ✓', variant: 'green' },
+  surplus: { ar: 'فائض', en: 'Surplus', variant: 'amber' },
+  deficit: { ar: 'عجز', en: 'Deficit', variant: 'red' },
+};
+
 export function AdminVouchersPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
   const { runAction } = useUi();
-  const [vouchers, setVouchers] = useState<Voucher[]>([]);
-  const [pending, setPending] = useState<Custody[]>([]);
-  const [loading, setLoading] = useState(true);
+  const invalidate = useInvalidateQueries();
   const [proofFiles, setProofFiles] = useState<Record<string, File | null>>({});
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [methods, setMethods] = useState<Record<string, string>>({});
   const [bankRefs, setBankRefs] = useState<Record<string, string>>({});
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [pendingQuery, setPendingQuery] = useState('');
+  const [pendingProjectId, setPendingProjectId] = useState('');
+  const [pendingBalance, setPendingBalance] = useState<'all' | JournalCompareStatus>('all');
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [v, queue] = await Promise.all([
-        dashboardService.vouchers(),
-        custodyService.disbursementQueue(),
-      ]);
-      setVouchers(v);
-      console.log('queue', queue);
-      console.log('vouchers', v);
-      setPending(queue);
-    } catch {
-      showToast(t('common.noData'), 'error');
-      setVouchers([]);
-      setPending([]);
-    } finally {
-      setLoading(false);
-    }
+  const {
+    data: pending = [],
+    isLoading: pendingLoading,
+    isFetching: pendingFetching,
+    refetch: refetchPending,
+  } = useQuery({
+    queryKey: queryKeys.custodies.disbursementQueue(),
+    queryFn: () => custodyService.disbursementQueue(),
+    staleTime: CACHE.transactional.staleTime,
+    gcTime: CACHE.transactional.gcTime,
+  });
+
+  const vouchersTable = useServerDataTable<Voucher>({
+    queryKey: queryKeys.dashboard.vouchers(),
+    queryFn: (params, signal) => dashboardService.vouchers(params, { signal }),
+    staleTime: CACHE.transactional.staleTime,
+    gcTime: CACHE.transactional.gcTime,
+  });
+
+  const loading = pendingLoading || vouchersTable.isLoading;
+  const refreshAll = async () => {
+    await Promise.all([refetchPending(), vouchersTable.refetch()]);
   };
 
-  useEffect(() => { load(); }, []);
+  const pendingProjects = useMemo(() => {
+    const map = new Map<string, Project>();
+    pending.forEach((c) => map.set(entityId(c.project), c.project as Project));
+    return [...map.values()];
+  }, [pending]);
+
+  const filteredPending = useMemo(() => {
+    const q = pendingQuery.trim().toLowerCase();
+    return pending.filter((c) => {
+      const disburseAmt = amounts[c._id] ? Number(amounts[c._id]) : disbursementTotal(c);
+      const cmp = compareAccrualDisbursement(
+        c.accrualEntry ?? [],
+        disbursementPreviewForCustody(c, disburseAmt),
+      );
+      if (pendingProjectId && entityId(c.project) !== pendingProjectId) return false;
+      if (pendingBalance !== 'all' && cmp.status !== pendingBalance) return false;
+      if (!q) return true;
+      return (
+        c.custodyNumber.toLowerCase().includes(q)
+        || userName(c.holder, lang).toLowerCase().includes(q)
+        || projectName(c.project, lang).toLowerCase().includes(q)
+      );
+    });
+  }, [pending, pendingQuery, pendingProjectId, pendingBalance, amounts, lang]);
 
   const registerDisbursement = (custody: Custody) => {
     const proofFile = proofFiles[custody._id];
@@ -801,7 +919,8 @@ export function AdminVouchersPage() {
         bankReference: bankRefs[custody._id] || undefined,
       });
       setProofFiles((prev) => ({ ...prev, [custody._id]: null }));
-      await load();
+      await invalidate.custodies();
+      await invalidate.dashboard();
     }, { success: t('admin.voucherRegistered') });
   };
 
@@ -814,90 +933,174 @@ export function AdminVouchersPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Notice icon="🧾">{t('admin.vouchersNotice')}</Notice>
-        <RefreshButton onRefresh={load} loading={loading} />
+        <RefreshButton onRefresh={refreshAll} loading={loading || pendingFetching || vouchersTable.isFetching} />
       </div>
 
-      <Card title={`⏳ ${t('admin.pendingDisbursement')}`}>
+      <Card title={`⏳ ${t('admin.pendingDisbursement')}`} className="!p-0 overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#eef1f6] bg-[#f8fafc] flex flex-wrap gap-3 items-end">
+          <FormField label={t('common.search')} className="min-w-[200px] flex-1">
+            <input
+              className={inputClass}
+              placeholder={lang === 'ar' ? 'رقم العهدة، مدير، مشروع...' : 'Custody, manager, project...'}
+              value={pendingQuery}
+              onChange={(e) => setPendingQuery(e.target.value)}
+            />
+          </FormField>
+          <FormField label={t('common.project')} className="min-w-[180px]">
+            <select className={selectClass} value={pendingProjectId} onChange={(e) => setPendingProjectId(e.target.value)}>
+              <option value="">{t('admin.allProjects')}</option>
+              {pendingProjects.map((p) => (
+                <option key={entityId(p)} value={entityId(p)}>{projectName(p, lang)}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label={lang === 'ar' ? 'حالة التوازن' : 'Balance'} className="min-w-[160px]">
+            <select
+              className={selectClass}
+              value={pendingBalance}
+              onChange={(e) => setPendingBalance(e.target.value as typeof pendingBalance)}
+            >
+              <option value="all">{t('common.all')}</option>
+              <option value="balanced">{lang === 'ar' ? 'متوازن ✓' : 'Balanced'}</option>
+              <option value="surplus">{lang === 'ar' ? 'فائض' : 'Surplus'}</option>
+              <option value="deficit">{lang === 'ar' ? 'عجز' : 'Deficit'}</option>
+            </select>
+          </FormField>
+          <span className="text-[11px] text-muted font-bold pb-2">
+            {filteredPending.length} / {pending.length}
+          </span>
+        </div>
+
         {loading ? (
-          <PageLoader compact />
+          <div className="p-4"><PageLoader compact /></div>
         ) : pending.length === 0 ? (
           <p className="text-sm text-muted text-center py-6">{t('admin.noPendingDisbursement')}</p>
+        ) : filteredPending.length === 0 ? (
+          <p className="text-sm text-muted text-center py-6">{t('common.noData')}</p>
         ) : (
-          <div className="space-y-4">
-            {pending.map((c) => {
+          <div className="p-4 space-y-3">
+            {filteredPending.map((c) => {
               const pendingInvoices = disbursementEligibleInvoices(c.invoices);
+              const disburseAmt = amounts[c._id] ? Number(amounts[c._id]) : disbursementTotal(c);
+              const accrualLines = c.accrualEntry ?? [];
+              const disburseLines = disbursementPreviewForCustody(c, disburseAmt);
+              const cmp = compareAccrualDisbursement(accrualLines, disburseLines);
+              const balanceLabel = BALANCE_CHIP[cmp.status];
+
               return (
-              <div key={c._id} className="p-4 rounded-xl border border-[#e3e9f2] bg-[#f9fbfe] space-y-3">
-                <div className="flex flex-wrap justify-between gap-2">
-                  <div>
-                    <div className="font-extrabold text-navy">{c.custodyNumber}</div>
-                    <div className="text-sm text-muted">
-                      {userName(c.holder, lang)} · {projectName(c.project, lang)}
+                <details
+                  key={c._id}
+                  className="group rounded-xl border border-[#e3e9f2] bg-white shadow-sm overflow-hidden"
+                >
+                  <summary className="flex flex-wrap items-center gap-3 p-4 cursor-pointer list-none hover:bg-[#f9fbfe] [&::-webkit-details-marker]:hidden">
+                    <span className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 grid place-items-center font-bold shrink-0">⏳</span>
+                    <div className="flex-1 min-w-[180px]">
+                      <div className="font-extrabold text-navy">{c.custodyNumber}</div>
+                      <div className="text-xs text-muted mt-0.5">
+                        {userName(c.holder, lang)} · {projectName(c.project, lang)}
+                      </div>
                     </div>
+                    <Chip variant={balanceLabel.variant}>
+                      {lang === 'ar' ? balanceLabel.ar : balanceLabel.en}
+                      {cmp.status !== 'balanced' && ` · ${formatMoney(cmp.diff, lang)}`}
+                    </Chip>
+                    <Amount>{formatMoney(disburseAmt, lang)}</Amount>
+                    <span className="text-muted group-open:rotate-180 transition-transform">▾</span>
+                  </summary>
+
+                  <div className="px-4 pb-4 border-t border-[#eef1f6] pt-4 space-y-3 bg-[#fcfdfe]">
                     {pendingInvoices.length > 0 && (
-                      <div className="text-xs text-brand-700 font-bold mt-1">
+                      <div className="text-xs text-brand-700 font-bold">
                         {pendingInvoices.map((i) => `${i.referenceNumber} (${formatMoney(i.total, lang)})`).join(' · ')}
                       </div>
                     )}
+
+                    {accrualLines.length > 0 && (
+                      <JournalTable
+                        lang={lang}
+                        title={lang === 'ar' ? 'استحقاق مشتريات الموقع' : 'Site purchases accrual'}
+                        tag={lang === 'ar' ? 'قيد استحقاق مسجل' : 'Posted accrual'}
+                        lines={accrualLines}
+                      />
+                    )}
+                    {disburseLines.length > 0 && (
+                      <JournalTable
+                        lang={lang}
+                        title={lang === 'ar' ? 'إعادة شحن العهدة بنكياً' : 'Bank disbursement'}
+                        tag={lang === 'ar' ? 'معاينة قيد الصرف' : 'Disbursement preview'}
+                        lines={disburseLines}
+                      />
+                    )}
+                    <JournalCrossBalance accrualLines={accrualLines} disbursementLines={disburseLines} lang={lang} />
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                      <FormField label={t('admin.disburseAmountLabel')}>
+                        <input
+                          className={inputClass}
+                          type="number"
+                          placeholder={formatMoney(disbursementTotal(c), lang)}
+                          value={amounts[c._id] || ''}
+                          onChange={(e) => setAmounts((prev) => ({ ...prev, [c._id]: e.target.value }))}
+                        />
+                      </FormField>
+                      <FormField label={t('admin.proofFile')} hint={t('admin.proofFileHint')}>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          className={inputClass}
+                          onChange={(e) =>
+                            setProofFiles((prev) => ({ ...prev, [c._id]: e.target.files?.[0] || null }))
+                          }
+                        />
+                      </FormField>
+                      <FormField label={lang === 'ar' ? 'طريقة التحويل' : 'Method'}>
+                        <select
+                          className={selectClass}
+                          value={methods[c._id] || 'bank_transfer'}
+                          onChange={(e) => setMethods((prev) => ({ ...prev, [c._id]: e.target.value }))}
+                        >
+                          <option value="bank_transfer">{lang === 'ar' ? 'تحويل بنكي' : 'Bank transfer'}</option>
+                          <option value="check">{lang === 'ar' ? 'شيك' : 'Check'}</option>
+                        </select>
+                      </FormField>
+                      <FormField label={lang === 'ar' ? 'رقم العملية' : 'Reference'}>
+                        <input
+                          className={inputClass}
+                          value={bankRefs[c._id] || ''}
+                          onChange={(e) => setBankRefs((prev) => ({ ...prev, [c._id]: e.target.value }))}
+                        />
+                      </FormField>
+                    </div>
+                    {proofFiles[c._id] && (
+                      <p className="text-xs text-muted">📎 {proofFiles[c._id]!.name}</p>
+                    )}
+                    <Button onClick={() => registerDisbursement(c)}>{t('admin.registerVoucher')}</Button>
                   </div>
-                  <Amount>{formatMoney(disbursementTotal(c), lang)}</Amount>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <FormField label={t('admin.disburseAmountLabel')}>
-                    <input
-                      className={inputClass}
-                      type="number"
-                      placeholder={formatMoney(disbursementTotal(c), lang)}
-                      value={amounts[c._id] || ''}
-                      onChange={(e) => setAmounts((prev) => ({ ...prev, [c._id]: e.target.value }))}
-                    />
-                  </FormField>
-                  <FormField label={t('admin.proofFile')} hint={t('admin.proofFileHint')}>
-                    <input
-                      type="file"
-                      accept="image/*,application/pdf"
-                      className={inputClass}
-                      onChange={(e) =>
-                        setProofFiles((prev) => ({ ...prev, [c._id]: e.target.files?.[0] || null }))
-                      }
-                    />
-                  </FormField>
-                  <FormField label={lang === 'ar' ? 'طريقة التحويل' : 'Method'}>
-                    <select
-                      className={selectClass}
-                      value={methods[c._id] || 'bank_transfer'}
-                      onChange={(e) => setMethods((prev) => ({ ...prev, [c._id]: e.target.value }))}
-                    >
-                      <option value="bank_transfer">{lang === 'ar' ? 'تحويل بنكي' : 'Bank transfer'}</option>
-                      <option value="check">{lang === 'ar' ? 'شيك' : 'Check'}</option>
-                    </select>
-                  </FormField>
-                  <FormField label={lang === 'ar' ? 'رقم العملية' : 'Reference'}>
-                    <input
-                      className={inputClass}
-                      value={bankRefs[c._id] || ''}
-                      onChange={(e) => setBankRefs((prev) => ({ ...prev, [c._id]: e.target.value }))}
-                    />
-                  </FormField>
-                </div>
-                {proofFiles[c._id] && (
-                  <p className="text-xs text-muted">📎 {proofFiles[c._id]!.name}</p>
-                )}
-                <Button onClick={() => registerDisbursement(c)}>{t('admin.registerVoucher')}</Button>
-              </div>
-            );})}
+                </details>
+              );
+            })}
           </div>
         )}
       </Card>
 
       <Card title={`🗄️ ${t('admin.vouchersArchive')}`}>
-        {loading ? (
+        <div className="px-4 py-3 border-b border-[#eef1f6] bg-[#f8fafc]">
+          <FormField label={t('common.search')} className="max-w-md">
+            <input
+              className={inputClass}
+              value={vouchersTable.table.query}
+              onChange={(e) => vouchersTable.table.setQuery(e.target.value)}
+              placeholder={lang === 'ar' ? 'رقم السند · المرجع البنكي' : 'Voucher # · bank reference'}
+            />
+          </FormField>
+        </div>
+        {vouchersTable.isLoading ? (
           <PageLoader compact />
-        ) : vouchers.length === 0 ? (
+        ) : vouchersTable.items.length === 0 ? (
           <p className="text-sm text-muted text-center py-6">{t('common.noData')}</p>
         ) : (
           <div className="space-y-3">
-            {vouchers.map((v) => {
+            {vouchersTable.items.map((v) => {
               const linked = v.custody;
               const proof = v.proofUrl || linked?.disbursementProof;
               return (
@@ -922,6 +1125,7 @@ export function AdminVouchersPage() {
                   )}
                   {v.accrualEntry && v.accrualEntry.length > 0 && (
                     <JournalTable
+                      lang={lang}
                       title={lang === 'ar' ? 'استحقاق مشتريات الموقع' : 'Site purchases accrual'}
                       tag={lang === 'ar' ? 'قيد استحقاق' : 'Accrual'}
                       lines={v.accrualEntry}
@@ -929,15 +1133,32 @@ export function AdminVouchersPage() {
                   )}
                   {v.disbursementEntry && v.disbursementEntry.length > 0 && (
                     <JournalTable
+                      lang={lang}
                       title={lang === 'ar' ? 'إعادة شحن العهدة بنكياً' : 'Bank disbursement'}
                       tag={lang === 'ar' ? 'قيد الصرف' : 'Disbursement'}
                       lines={v.disbursementEntry}
                     />
                   )}
+                  {v.accrualEntry?.length && v.disbursementEntry?.length ? (
+                    <JournalCrossBalance
+                      accrualLines={v.accrualEntry}
+                      disbursementLines={v.disbursementEntry}
+                      lang={lang}
+                    />
+                  ) : null}
                 </CustodyArchiveCard>
               );
             })}
           </div>
+        )}
+        {!vouchersTable.isLoading && vouchersTable.total > vouchersTable.pageSize && (
+          <Pagination
+            page={vouchersTable.page}
+            totalPages={vouchersTable.totalPages}
+            total={vouchersTable.total}
+            pageSize={vouchersTable.pageSize}
+            onPageChange={vouchersTable.table.setPage}
+          />
         )}
       </Card>
 

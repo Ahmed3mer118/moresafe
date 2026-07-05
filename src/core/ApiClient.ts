@@ -42,10 +42,18 @@ export class ApiClient {
       headers.Authorization = `Bearer ${this.token}`;
     }
 
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...options,
-      headers,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        headers,
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw err;
+      }
+      throw err;
+    }
 
     const data = await response.json().catch(() => ({}));
 
@@ -60,26 +68,28 @@ export class ApiClient {
     return data as T;
   }
 
-  get<T>(path: string) {
-    return this.request<T>(path);
+  get<T>(path: string, init?: RequestInit) {
+    return this.request<T>(path, { ...init, method: 'GET' });
   }
 
-  post<T>(path: string, body?: unknown) {
+  post<T>(path: string, body?: unknown, init?: RequestInit) {
     return this.request<T>(path, {
+      ...init,
       method: 'POST',
       body: body instanceof FormData ? body : JSON.stringify(body),
     });
   }
 
-  patch<T>(path: string, body?: unknown) {
+  patch<T>(path: string, body?: unknown, init?: RequestInit) {
     return this.request<T>(path, {
+      ...init,
       method: 'PATCH',
       body: JSON.stringify(body),
     });
   }
 
-  delete<T>(path: string) {
-    return this.request<T>(path, { method: 'DELETE' });
+  delete<T>(path: string, init?: RequestInit) {
+    return this.request<T>(path, { ...init, method: 'DELETE' });
   }
 }
 

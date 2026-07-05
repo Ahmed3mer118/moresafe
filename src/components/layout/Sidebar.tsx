@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -20,7 +21,7 @@ interface SidebarProps {
   onClose?: () => void;
 }
 
-export function Sidebar({ subtitle, navGroups, open, onClose }: SidebarProps) {
+export const Sidebar = memo(function Sidebar({ subtitle, navGroups, open, onClose }: SidebarProps) {
   const { t, i18n } = useTranslation();
   const { user, logout } = useAuth();
   const lang = i18n.language as 'ar' | 'en';
@@ -51,6 +52,10 @@ export function Sidebar({ subtitle, navGroups, open, onClose }: SidebarProps) {
               <img
                 src={logo}
                 alt="Moresafe"
+                width={139}
+                height={139}
+                loading="eager"
+                decoding="async"
                 className="w-full h-auto max-h-[72px] object-contain object-center mx-auto"
               />
             </div>
@@ -125,4 +130,4 @@ export function Sidebar({ subtitle, navGroups, open, onClose }: SidebarProps) {
       </aside>
     </>
   );
-}
+});

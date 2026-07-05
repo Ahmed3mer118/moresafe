@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from 'react';
 import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
 import { StatCard, StatsGrid } from '../../components/ui/StatCard';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
@@ -11,10 +12,13 @@ import { InvoiceDetailModal } from '../../components/ui/InvoiceDetailModal';
 import { Modal } from '../../components/ui/Modal';
 import { useUi } from '../../context/UiContext';
 import { useFormDraft } from '../../hooks/useFormDraft';
-import { useTableFilter } from '../../hooks/useTableFilter';
+import { useServerDataTable } from '../../hooks/useServerDataTable';
+import { useInvalidateQueries } from '../../hooks/useInvalidateQueries';
+import { queryKeys } from '../../lib/queryKeys';
+import { CACHE } from '../../lib/cachePolicy';
 import { BudgetOverview } from '../../components/budget/BudgetOverview';
 import { dashboardService, custodyService, invoiceService, projectService } from '../../services';
-import type { Custody, Invoice, Project } from '../../types';
+import type { Invoice, Project } from '../../types';
 import { formatMoney, projectName, entityId, statusLabel, invoiceManagerName, formatDate } from '../../utils/format';
 import { exportInvoicesFromTable } from '../../utils/exportInvoicesPdf';
 import { notificationTypeClass } from '../../utils/notificationStyles';
@@ -22,6 +26,7 @@ import { showToast } from '../../utils/toast';
 import { isInvoiceSubmittedForApproval } from '../../utils/custodyHelpers';
 import { Notice } from '../../components/ui/Notice';
 import { RefreshButton } from '../../components/ui/RefreshButton';
+import { ImageLightbox } from '../../components/ui/ImageLightbox';
 
 // const PM_BASE = '/dashboard/project-manager';
 
@@ -218,7 +223,7 @@ export function PANewCustodyPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const { form, setForm, clearDraft } = useFormDraft('pa.new-custody', EMPTY_CUSTODY_FORM);
 
-  useEffect(() => { projectService.list().then(setProjects); }, []);
+  useEffect(() => { projectService.list({ limit: 200, page: 1 }).then((r) => setProjects(r.items)); }, []);
 
   const submit = () =>
     runAction(async () => {
@@ -260,6 +265,7 @@ export function PANewCustodyPage() {
 export function PAInvoicesPage() {
   const { t, i18n } = useTranslation();
   const { runAction } = useUi();
+  const invalidate = useInvalidateQueries();
   const { custodyId: routeCustodyId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -272,10 +278,6 @@ export function PAInvoicesPage() {
     }
   }, [routeCustodyId, navigate]);
 
-  const [activeCustody, setActiveCustody] = useState<Custody | null>(null);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -284,67 +286,67 @@ export function PAInvoicesPage() {
   const [queueTotal, setQueueTotal] = useState(0);
   const [currentPreview, setCurrentPreview] = useState<string | null>(null);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
+  const [previewLightbox, setPreviewLightbox] = useState(false);
   const { form, setForm, resetForm } = useFormDraft('pa.invoice', EMPTY_INVOICE_FORM);
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+
+  const {
+    table,
+    items,
+    total,
+    totalPages,
+    page,
+    pageSize,
+    isLoading,
+    isFetching,
+    isError,
+    refetch,
+  } = useServerDataTable<Invoice>({
+    queryKey: queryKeys.invoices.list(custodyId ? { custodyId } : undefined),
+    queryFn: (params, signal) =>
+      invoiceService.list({ ...params, ...(custodyId ? { custodyId } : {}) }, { signal }),
+    staleTime: CACHE.transactional.staleTime,
+    gcTime: CACHE.transactional.gcTime,
+  });
+
+  const { data: projectsData } = useQuery({
+    queryKey: queryKeys.projects.list({ limit: 200, page: 1 }),
+    queryFn: ({ signal }) => projectService.list({ limit: 200, page: 1 }, { signal }),
+    staleTime: CACHE.reference.staleTime,
+    gcTime: CACHE.reference.gcTime,
+  });
+  const projects = projectsData?.items ?? [];
+
+  const { data: activeCustody } = useQuery({
+    queryKey: queryKeys.custodies.detail(custodyId),
+    queryFn: () => custodyService.get(custodyId),
+    enabled: Boolean(custodyId),
+    staleTime: CACHE.transactional.staleTime,
+  });
+
+  useEffect(() => {
+    if (activeCustody) {
+      setForm((f) => ({ ...f, projectId: entityId(activeCustody.project) }));
+    }
+  }, [activeCustody, setForm]);
+
+  const dateLocale = i18n.language === 'ar' ? 'ar-SA' : 'en-SA';
+  const lang = i18n.language;
 
   const currentFile = fileQueue[0] ?? null;
   const queuePosition = queueTotal > 0 ? queueTotal - fileQueue.length + 1 : 0;
   const pendingAfterCurrent = Math.max(0, fileQueue.length - 1);
 
-  const load = async () => {
-    setLoading(true);
-    const invParams = custodyId ? { custodyId } : undefined;
-    try {
-      const [invResult, projsResult] = await Promise.allSettled([
-        invoiceService.list(invParams),
-        projectService.list(),
-      ]);
-
-      if (invResult.status === 'fulfilled') setInvoices(invResult.value);
-      if (projsResult.status === 'fulfilled') setProjects(projsResult.value);
-      else showToast(t('pa.loadProjectsError'), 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, [custodyId]);
-
-  useEffect(() => {
-    if (!custodyId) {
-      setActiveCustody(null);
-      return;
-    }
-    custodyService.get(custodyId).then((c) => {
-      setActiveCustody(c);
-      setForm((f) => ({ ...f, projectId: entityId(c.project) }));
-    }).catch(() => setActiveCustody(null));
-  }, [custodyId, setForm]);
-
-  const dateLocale = i18n.language === 'ar' ? 'ar-SA' : 'en-SA';
-  const lang = i18n.language;
-
-  const tf = useTableFilter(
-    invoices,
-    [
-      (i) => i.referenceNumber,
-      (i) => i.supplier || '',
-      (i) => i.category || '',
-      (i) => projectName(i.project, lang),
-      (i) => invoiceManagerName(i, lang),
-      (i) => i.invoiceNumber || '',
-    ],
-    (i) => i.status
-  );
-
-  const statusOptions = useMemo(() => {
-    const unique = [...new Set(invoices.map((i) => i.status).filter(Boolean))].sort();
-    return [
+  const statusOptions = useMemo(
+    () => [
       { value: '', label: t('common.all') },
-      ...unique.map((s) => ({ value: s, label: statusLabel(s, t) })),
-    ];
-  }, [invoices, t]);
+      ...['accumulated', 'pending_pm', 'pm_approved', 'pm_rejected', 'pending_finance', 'finance_approved', 'finance_rejected', 'draft', 'settled'].map(
+        (s) => ({ value: s, label: statusLabel(s, t) }),
+      ),
+    ],
+    [t],
+  );
 
   const invoiceColumns = useMemo(
     () => [
@@ -445,13 +447,12 @@ export function PAInvoicesPage() {
   );
 
   const exportPdf = () => {
-    const rows = tf.filtered;
-    if (!rows.length) return showToast(t('common.noData'), 'error');
+    if (!items.length) return showToast(t('common.noData'), 'error');
     exportInvoicesFromTable({
       title: t('pa.invoiceLog'),
       filename: 'my-invoices',
       columns: invoiceColumns,
-      rows,
+      rows: items,
       lang,
       t,
     }).catch(() => showToast(t('common.exportFailed'), 'error'));
@@ -468,6 +469,7 @@ export function PAInvoicesPage() {
     setQueueTotal(0);
     setLineItems([]);
     resetForm(resetInvoiceFields(form.projectId));
+    setPreviewLightbox(false);
   };
 
   const openUpload = () => {
@@ -614,7 +616,8 @@ export function PAInvoicesPage() {
 
       if (remaining.length === 0) {
         closeUpload();
-        await load();
+        await invalidate.invoices();
+        await invalidate.custodies();
         return;
       }
 
@@ -672,20 +675,29 @@ export function PAInvoicesPage() {
       >
         <DataTable
           columns={invoiceColumns}
-          data={tf.filtered}
-          loading={loading}
-          query={tf.query}
-          onQueryChange={tf.setQuery}
+          data={items}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError}
+          query={table.query}
+          onQueryChange={table.setQuery}
           searchPlaceholder={t('common.search')}
           statusFilter={{
-            value: tf.status,
-            onChange: tf.setStatus,
+            value: table.status,
+            onChange: table.setStatus,
             options: statusOptions,
           }}
-          onReset={tf.reset}
-          onRefresh={load}
-          shown={tf.shown}
-          total={tf.total}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={items.length}
+          total={total}
+          pagination={{
+            page,
+            totalPages,
+            total,
+            pageSize,
+            onPageChange: table.setPage,
+          }}
           exportFilename={isCustodyScope ? `custody-${custodyId}-invoices` : 'my-invoices'}
           exportTitle={isCustodyScope ? t('pa.custodyInvoices') : t('pa.invoiceLog')}
           exportRowLabel={lang === 'ar' ? 'فاتورة' : 'invoices'}
@@ -831,16 +843,43 @@ export function PAInvoicesPage() {
 
           {currentFile && currentPreview && (
             <div className="rounded-xl border-2 border-brand-200 overflow-hidden bg-[#f7f9fc]">
-              <div className="px-3 py-2 bg-brand-50 border-b border-brand-100 flex justify-between items-center text-xs font-bold text-navy">
+              <div className="px-3 py-2 bg-brand-50 border-b border-brand-100 flex flex-wrap justify-between items-center gap-2 text-xs font-bold text-navy">
                 <span>{t('pa.currentImage', { name: currentFile.name })}</span>
-                {queueTotal > 1 && <span>{queuePosition} / {queueTotal}</span>}
+                <div className="flex items-center gap-2">
+                  {queueTotal > 1 && <span>{queuePosition} / {queueTotal}</span>}
+                  <Button size="sm" variant="ghost" onClick={() => runOcr(currentFile)} disabled={ocrLoading || !form.projectId}>
+                    {ocrLoading ? t('common.loading') : t('pa.scanInvoice')}
+                  </Button>
+                </div>
               </div>
               {currentFile.type === 'application/pdf' ? (
                 <div className="p-10 text-center text-muted">📄 {currentFile.name}</div>
               ) : (
-                <img src={currentPreview} alt="" className="w-full max-h-64 object-contain bg-white" />
+                <button
+                  type="button"
+                  onClick={() => setPreviewLightbox(true)}
+                  className="w-full block bg-white cursor-zoom-in"
+                  title={t('pa.image')}
+                >
+                  <img
+                    src={currentPreview}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="w-full max-h-64 object-contain"
+                  />
+                </button>
               )}
             </div>
+          )}
+
+          {previewLightbox && currentPreview && currentFile?.type !== 'application/pdf' && (
+            <ImageLightbox
+              images={[{ url: currentPreview, filename: currentFile.name, alt: t('pa.image') }]}
+              index={0}
+              onClose={() => setPreviewLightbox(false)}
+              onIndexChange={() => {}}
+            />
           )}
 
           {pendingAfterCurrent > 0 && (
@@ -976,15 +1015,25 @@ export function PAInvoicesPage() {
 export function PARejectedPage() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
   const [detailId, setDetailId] = useState<string | null>(null);
 
-  const load = () => {
-    setLoading(true);
-    return invoiceService.rejected().then(setInvoices).finally(() => setLoading(false));
-  };
-  useEffect(() => { load(); }, []);
+  const {
+    table,
+    items,
+    total,
+    totalPages,
+    page,
+    pageSize,
+    isLoading,
+    isFetching,
+    isError,
+    refetch,
+  } = useServerDataTable<Invoice>({
+    queryKey: queryKeys.invoices.rejected(),
+    queryFn: (params, signal) => invoiceService.rejected(params, { signal }),
+    staleTime: CACHE.transactional.staleTime,
+    gcTime: CACHE.transactional.gcTime,
+  });
 
   const goUploadNew = (inv: Invoice) => {
     const cid = typeof inv.custody === 'string' ? inv.custody : entityId(inv.custody);
@@ -1014,12 +1063,27 @@ export function PARejectedPage() {
               ),
             },
           ]}
-          data={invoices}
-          loading={loading}
+          data={items}
+          loading={isLoading}
+          fetching={isFetching}
+          error={isError}
+          query={table.query}
+          onQueryChange={table.setQuery}
+          searchPlaceholder={t('common.search')}
+          onReset={table.reset}
+          onRefresh={() => { void refetch(); }}
+          shown={items.length}
+          total={total}
+          pagination={{
+            page,
+            totalPages,
+            total,
+            pageSize,
+            onPageChange: table.setPage,
+          }}
           exportFilename="rejected-invoices"
           exportTitle={t('nav.rejected')}
           exportRowLabel={i18n.language === 'ar' ? 'فاتورة' : 'invoices'}
-          onRefresh={load}
           emptyText={t('common.noData')}
         />
       </Card>

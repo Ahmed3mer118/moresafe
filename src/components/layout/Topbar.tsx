@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
@@ -14,7 +14,7 @@ interface TopbarProps {
   onMenuClick?: () => void;
 }
 
-export function Topbar({ title, subtitle, onMenuClick }: TopbarProps) {
+export const Topbar = memo(function Topbar({ title, subtitle, onMenuClick }: TopbarProps) {
   const { t, i18n } = useTranslation();
   const { user } = useAuth();
   const [unread, setUnread] = useState(0);
@@ -24,9 +24,9 @@ export function Topbar({ title, subtitle, onMenuClick }: TopbarProps) {
 
   const notifPath = user ? `${ROLE_DASHBOARD[user.role as Role]}/notifications` : '#';
 
-  const onNotifData = useCallback((d: { notifications: Notification[]; unread: number }) => {
+  const onNotifData = useCallback((d: { notifications: Notification[]; unread: number; items?: Notification[] }) => {
     setUnread(d.unread);
-    setNotifications(d.notifications.slice(0, 8));
+    setNotifications((d.notifications ?? d.items ?? []).slice(0, 8));
   }, []);
 
   useNotificationSync(onNotifData, Boolean(user));
@@ -170,4 +170,4 @@ export function Topbar({ title, subtitle, onMenuClick }: TopbarProps) {
       )}
     </header>
   );
-}
+});

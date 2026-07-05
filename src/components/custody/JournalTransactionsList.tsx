@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Card } from '../ui/Card';
 import { RefreshButton } from '../ui/RefreshButton';
 import { PageLoader } from '../ui/PageLoader';
+import { Pagination } from '../ui/Pagination';
 import { JournalTable } from '../ui/JournalBlock';
 import type { CustodyTransaction, JournalLine, Project, User } from '../../types';
 import { formatMoney, formatDate, projectName, userName } from '../../utils/format';
@@ -23,15 +24,25 @@ export function journalLinesForTx(tx: CustodyTransaction): JournalLine[] {
 export function JournalTransactionsList({
   rows,
   loading,
+  fetching,
   onRefresh,
   showProject,
   showManager,
+  pagination,
 }: {
   rows: CustodyTransaction[];
   loading: boolean;
-  onRefresh?: () => void;
+  fetching?: boolean;
+  onRefresh?: () => void | Promise<void>;
   showProject?: boolean;
   showManager?: boolean;
+  pagination?: {
+    page: number;
+    totalPages: number;
+    total: number;
+    pageSize: number;
+    onPageChange: (page: number) => void;
+  };
 }) {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
@@ -44,7 +55,8 @@ export function JournalTransactionsList({
   return (
     <Card
       title={`📒 ${t('pa.transactions')}`}
-      action={onRefresh ? <RefreshButton onRefresh={onRefresh} loading={loading} /> : undefined}
+      action={onRefresh ? <RefreshButton onRefresh={onRefresh} loading={loading || fetching} /> : undefined}
+      noPadding={Boolean(pagination)}
     >
       {loading ? (
         <PageLoader compact />
@@ -90,7 +102,9 @@ export function JournalTransactionsList({
           })}
         </div>
       )}
-
+      {pagination && (
+        <Pagination {...pagination} />
+      )}
     </Card>
   );
 }

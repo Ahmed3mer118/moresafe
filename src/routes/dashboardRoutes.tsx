@@ -1,4 +1,6 @@
+import type { ReactNode } from 'react';
 import { DashboardLayoutFactory } from '../components/layout/DashboardLayout';
+import { RouteSuspense } from '../components/ui/RouteSuspense';
 import {
   AdminHomePage,
   AdminUsersPage,
@@ -9,9 +11,10 @@ import {
   AdminLogsPage,
   AdminAnalyticsPage,
   AdminNotificationsPage,
-} from '../pages/admin/AdminPages';
-import { AdminDisbursementPage, AdminCustodyDetailPage, AdminReportsPage, AdminVouchersPage } from '../pages/admin/AdminCustodyPages';
-import {
+  AdminDisbursementPage,
+  AdminCustodyDetailPage,
+  AdminReportsPage,
+  AdminVouchersPage,
   FinanceHomePage,
   FinanceReviewPage,
   FinanceEntriesPage,
@@ -20,8 +23,6 @@ import {
   FinanceTaxPage,
   FinanceReportsPage,
   FinanceSuppliersPage,
-} from '../pages/finance/FinancePages';
-import {
   PMHomePage,
   PMProjectsPage,
   PMEngineersPage,
@@ -31,15 +32,17 @@ import {
   PMCustodyArchivePage,
   PMCustodyArchiveDetailPage,
   PAApprovalLogPage,
-} from '../pages/project-manager/PMPages';
-import {
   PAHomePage,
   PANewCustodyPage,
   PAInvoicesPage,
   PARejectedPage,
-} from '../pages/project-accountant/PAPages';
-import { PACustodyListPage, PACustodyDetailPage, PATransactionsPage } from '../pages/project-accountant/PACustodyPages';
-import { NotificationsPage } from '../components/ui/NotificationsPage';
+  PACustodyListPage,
+  PACustodyDetailPage,
+  PATransactionsPage,
+  NotificationsPage,
+} from './lazyPages';
+
+const lazy = (page: ReactNode) => <RouteSuspense>{page}</RouteSuspense>;
 
 const PM_BASE = '/dashboard/project-manager';
 
@@ -130,7 +133,7 @@ export const FinanceLayout = DashboardLayoutFactory.create({
         { to: '/dashboard/finance/suppliers', labelKey: 'nav.suppliers', icon: '🏪' },
         { to: '/dashboard/finance/archive', labelKey: 'nav.archive', icon: '🗄️' },
         // { to: '/dashboard/finance/reports', labelKey: 'nav.reports', icon: '📁' },
-        { to: '/dashboard/finance/tax', labelKey: 'nav.tax', icon: '%' },
+        // { to: '/dashboard/finance/tax', labelKey: 'nav.tax', icon: '%' },
         { to: '/dashboard/finance/notifications', labelKey: 'nav.notifications', icon: '🔔' },
       ],
     },
@@ -178,7 +181,7 @@ export const PMLayout = DashboardLayoutFactory.create({
         { to: '/dashboard/project-accountant/approval-log', labelKey: 'pa.approvalLog', icon: '📋' },
         { to: '/dashboard/project-accountant/custody-archive', labelKey: 'nav.custodyArchive', icon: '📦' },
         // { to: '/dashboard/project-accountant/emergency', labelKey: 'nav.emergency', icon: '⚡' },
-        { to: '/dashboard/project-accountant/engineers', labelKey: 'nav.engineers', icon: '👷' },
+        // { to: '/dashboard/project-accountant/engineers', labelKey: 'nav.engineers', icon: '👷' },
         { to: '/dashboard/project-accountant/projects', labelKey: 'nav.projects', icon: '🏗' },
         // { to: '/dashboard/project-accountant/reports', labelKey: 'nav.reports', icon: '📊' },
         // { to: '/dashboard/project-accountant/notifications', labelKey: 'nav.notifications', icon: '🔔' },
@@ -266,54 +269,54 @@ export const PALayout = DashboardLayoutFactory.create({
 });
 
 export const adminRoutes = [
-  { index: true, element: <AdminHomePage /> },
-  { path: 'users', element: <AdminUsersPage /> },
-  { path: 'roles', element: <AdminRolesPage /> },
-  { path: 'projects', element: <AdminProjectsPage /> },
-  { path: 'analytics', element: <AdminAnalyticsPage /> },
-  { path: 'cycle', element: <AdminCyclePage /> },
-  { path: 'disbursement', element: <AdminDisbursementPage /> },
-  { path: 'disbursement/:custodyId', element: <AdminCustodyDetailPage /> },
-  { path: 'vouchers', element: <AdminVouchersPage /> },
-  { path: 'reports', element: <AdminReportsPage /> },
-  { path: 'settings', element: <AdminSettingsPage /> },
-  { path: 'logs', element: <AdminLogsPage /> },
-  { path: 'notifications', element: <AdminNotificationsPage /> },
+  { index: true, element: lazy(<AdminHomePage />) },
+  { path: 'users', element: lazy(<AdminUsersPage />) },
+  { path: 'roles', element: lazy(<AdminRolesPage />) },
+  { path: 'projects', element: lazy(<AdminProjectsPage />) },
+  { path: 'analytics', element: lazy(<AdminAnalyticsPage />) },
+  { path: 'cycle', element: lazy(<AdminCyclePage />) },
+  { path: 'disbursement', element: lazy(<AdminDisbursementPage />) },
+  { path: 'disbursement/:custodyId', element: lazy(<AdminCustodyDetailPage />) },
+  { path: 'vouchers', element: lazy(<AdminVouchersPage />) },
+  { path: 'reports', element: lazy(<AdminReportsPage />) },
+  { path: 'settings', element: lazy(<AdminSettingsPage />) },
+  { path: 'logs', element: lazy(<AdminLogsPage />) },
+  { path: 'notifications', element: lazy(<AdminNotificationsPage />) },
 ];
 
 export const financeRoutes = [
-  { index: true, element: <FinanceHomePage /> },
-  { path: 'review', element: <FinanceReviewPage /> },
-  { path: 'budgets', element: <FinanceBudgetsPage /> },
-  { path: 'entries', element: <FinanceEntriesPage /> },
-  { path: 'suppliers', element: <FinanceSuppliersPage /> },
-  { path: 'archive', element: <FinanceArchivePage /> },
-  { path: 'reports', element: <FinanceReportsPage /> },
-  { path: 'tax', element: <FinanceTaxPage /> },
-  { path: 'notifications', element: <NotificationsPage /> },
+  { index: true, element: lazy(<FinanceHomePage />) },
+  { path: 'review', element: lazy(<FinanceReviewPage />) },
+  { path: 'budgets', element: lazy(<FinanceBudgetsPage />) },
+  { path: 'entries', element: lazy(<FinanceEntriesPage />) },
+  { path: 'suppliers', element: lazy(<FinanceSuppliersPage />) },
+  { path: 'archive', element: lazy(<FinanceArchivePage />) },
+  { path: 'reports', element: lazy(<FinanceReportsPage />) },
+  { path: 'tax', element: lazy(<FinanceTaxPage />) },
+  { path: 'notifications', element: lazy(<NotificationsPage />) },
 ];
 
 export const pmRoutes = [
-  { index: true, element: <PMHomePage /> },
-  { path: 'approvals', element: <PMCustodyApprovalsPage /> },
-  { path: 'approval-log', element: <PAApprovalLogPage /> },
-  { path: 'custody-archive', element: <PMCustodyArchivePage /> },
-  { path: 'custody-archive/:custodyId', element: <PMCustodyArchiveDetailPage /> },
-  { path: 'emergency', element: <PMEmergencyPage /> },
-  { path: 'engineers', element: <PMEngineersPage /> },
-  { path: 'projects', element: <PMProjectsPage /> },
-  { path: 'reports', element: <PMReportsPage /> },
-  { path: 'notifications', element: <NotificationsPage /> },
+  { index: true, element: lazy(<PMHomePage />) },
+  { path: 'approvals', element: lazy(<PMCustodyApprovalsPage />) },
+  { path: 'approval-log', element: lazy(<PAApprovalLogPage />) },
+  { path: 'custody-archive', element: lazy(<PMCustodyArchivePage />) },
+  { path: 'custody-archive/:custodyId', element: lazy(<PMCustodyArchiveDetailPage />) },
+  { path: 'emergency', element: lazy(<PMEmergencyPage />) },
+  { path: 'engineers', element: lazy(<PMEngineersPage />) },
+  { path: 'projects', element: lazy(<PMProjectsPage />) },
+  { path: 'reports', element: lazy(<PMReportsPage />) },
+  { path: 'notifications', element: lazy(<NotificationsPage />) },
 ];
 
 export const paRoutes = [
-  { index: true, element: <PAHomePage /> },
-  { path: 'new-custody', element: <PANewCustodyPage /> },
-  { path: 'invoices', element: <PAInvoicesPage /> },
-  { path: 'transactions', element: <PATransactionsPage /> },
-  { path: 'custody', element: <PACustodyListPage /> },
-  { path: 'custody/:custodyId/invoices', element: <PAInvoicesPage /> },
-  { path: 'custody/:custodyId', element: <PACustodyDetailPage /> },
-  { path: 'rejected', element: <PARejectedPage /> },
-  { path: 'notifications', element: <NotificationsPage /> },
+  { index: true, element: lazy(<PAHomePage />) },
+  { path: 'new-custody', element: lazy(<PANewCustodyPage />) },
+  { path: 'invoices', element: lazy(<PAInvoicesPage />) },
+  { path: 'transactions', element: lazy(<PATransactionsPage />) },
+  { path: 'custody', element: lazy(<PACustodyListPage />) },
+  { path: 'custody/:custodyId/invoices', element: lazy(<PAInvoicesPage />) },
+  { path: 'custody/:custodyId', element: lazy(<PACustodyDetailPage />) },
+  { path: 'rejected', element: lazy(<PARejectedPage />) },
+  { path: 'notifications', element: lazy(<NotificationsPage />) },
 ];

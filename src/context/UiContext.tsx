@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { ApiError } from '../core/ApiClient';
 import { showToast, type ToastType } from '../utils/toast';
 
@@ -16,6 +16,24 @@ interface UiContextValue {
 }
 
 const UiContext = createContext<UiContextValue | null>(null);
+
+function GlobalLoadingOverlay() {
+  return (
+    <div className="fixed inset-0 z-[10000] bg-[rgba(15,36,64,0.22)] backdrop-blur-[3px] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-[0_20px_60px_rgba(15,36,64,0.18)] px-10 py-8 flex flex-col items-center gap-4 border border-[#e3e9f2] min-w-[220px]">
+        <div className="relative w-14 h-14">
+          <div className="absolute inset-0 rounded-full border-[3px] border-brand-100" />
+          <div className="absolute inset-0 rounded-full border-[3px] border-transparent border-t-brand-500 animate-spin" />
+          <div className="absolute inset-3 rounded-full bg-brand-50 animate-pulse" />
+        </div>
+        <div className="text-center space-y-1">
+          <span className="block text-sm font-extrabold text-navy">جاري التنفيذ...</span>
+          <span className="block text-[11px] text-muted font-semibold">يرجى الانتظار</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function UiProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
@@ -39,24 +57,15 @@ export function UiProvider({ children }: { children: ReactNode }) {
     }
   }, [bumpNotifications]);
 
+  const value = useMemo(
+    () => ({ loading, notifTick, runAction, bumpNotifications }),
+    [loading, notifTick, runAction, bumpNotifications],
+  );
+
   return (
-    <UiContext.Provider value={{ loading, notifTick, runAction, bumpNotifications }}>
+    <UiContext.Provider value={value}>
       {children}
-      {loading && (
-        <div className="fixed inset-0 z-[10000] bg-[rgba(15,36,64,0.22)] backdrop-blur-[3px] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-[0_20px_60px_rgba(15,36,64,0.18)] px-10 py-8 flex flex-col items-center gap-4 border border-[#e3e9f2] min-w-[220px]">
-            <div className="relative w-14 h-14">
-              <div className="absolute inset-0 rounded-full border-[3px] border-brand-100" />
-              <div className="absolute inset-0 rounded-full border-[3px] border-transparent border-t-brand-500 animate-spin" />
-              <div className="absolute inset-3 rounded-full bg-brand-50 animate-pulse" />
-            </div>
-            <div className="text-center space-y-1">
-              <span className="block text-sm font-extrabold text-navy">جاري التنفيذ...</span>
-              <span className="block text-[11px] text-muted font-semibold">يرجى الانتظار</span>
-            </div>
-          </div>
-        </div>
-      )}
+      {loading && <GlobalLoadingOverlay />}
     </UiContext.Provider>
   );
 }
