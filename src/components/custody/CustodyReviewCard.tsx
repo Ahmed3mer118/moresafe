@@ -91,7 +91,7 @@ export function custodyInvoiceColumns(
   ];
 }
 
-type ReviewStatus = 'pending_pm' | 'pending_finance';
+type ReviewStatus = 'accumulated' | 'pending_pm' | 'pending_finance';
 
 export function CustodyReviewCard({
   custody,

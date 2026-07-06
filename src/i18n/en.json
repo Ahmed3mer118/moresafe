@@ -106,8 +106,10 @@
       "remaining": "Remaining balance",
       "activeInvoices": "Active invoices",
       "rejected": "Rejected",
-      "sarAvailable": "SAR available"
+      "sarAvailable": "SAR available",
+      "pendingPmApprovals": "Awaiting your approval"
     },
+    "pendingPmApprovalsNotice": "{{count}} invoice(s) awaiting project manager review — approve from the approvals page",
     "recentInvoices": "Recent invoices",
     "approvalLog": "Approval log",
     "approvalLogNotice": "Every approval or rejection is recorded with the accountant name and custody or invoice.",
@@ -436,22 +438,22 @@
   },
   "status": {
     "open": "Open",
-    "closed": "Awaiting PA review",
+    "closed": "Awaiting custody accountant review",
     "pm_approved": "Awaiting Finance",
     "pm_rejected": "Rejected by PM",
     "settled": "Settled",
     "finance_rejected": "Rejected by Finance",
-    "accumulated": "Awaiting PA review",
-    "pending_pm": "Awaiting PM review",
+    "accumulated": "Awaiting custody accountant review",
+    "pending_pm": "Awaiting project manager review",
     "pending_finance": "Awaiting Finance",
     "active": "Active",
     "near_budget": "Near Budget",
     "over_budget": "Budget exceeded",
     "new": "New",
     "unknown": "Not set",
-    "finance_pending": "Pending Finance",
+    "finance_pending": "Awaiting disbursement",
     "draft": "Draft",
-    "finance_approved": "Finance approved"
+    "finance_approved": "Awaiting disbursement"
   },
   "budget": {
     "totalBudget": "Total budgets",

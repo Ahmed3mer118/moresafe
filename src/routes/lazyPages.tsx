@@ -60,6 +60,10 @@ export const PMCustodyApprovalsPage = lazyNamed(
   () => import('../pages/project-manager/PMPages'),
   'PMCustodyApprovalsPage',
 );
+export const PMApprovalsPage = lazyNamed(
+  () => import('../pages/project-manager/PMPages'),
+  'PMApprovalsPage',
+);
 export const PAApprovalLogPage = lazyNamed(() => import('../pages/project-manager/PMPages'), 'PAApprovalLogPage');
 export const PMCustodyArchivePage = lazyNamed(
   () => import('../pages/project-manager/PMPages'),

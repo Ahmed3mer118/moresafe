@@ -77,11 +77,21 @@ export function sumInvoices(invoices: Invoice[], statuses: Set<string>) {
 export function displayInvoicesTotal(
   custody: Custody,
   options?: {
-    reviewStatus?: 'pending_pm' | 'pending_finance';
+    reviewStatus?: 'accumulated' | 'pending_pm' | 'pending_finance';
     selectedInvoiceIds?: Set<string>;
   },
 ) {
   const invoices = custody.invoices ?? [];
+
+  if (options?.reviewStatus === 'accumulated') {
+    const relevant = invoices.filter((i) => i.status === 'accumulated');
+    if (options.selectedInvoiceIds?.size) {
+      return relevant
+        .filter((i) => options.selectedInvoiceIds!.has(i._id))
+        .reduce((sum, i) => sum + (i.total || 0), 0);
+    }
+    return relevant.reduce((sum, i) => sum + (i.total || 0), 0);
+  }
 
   if (options?.reviewStatus === 'pending_pm') {
     const relevant = invoices.filter((i) => i.status === 'pending_pm' || i.status === 'pm_approved');

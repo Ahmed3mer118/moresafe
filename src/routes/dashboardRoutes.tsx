@@ -263,6 +263,7 @@ export const PALayout = DashboardLayoutFactory.create({
     invoices: { titleKey: 'nav.invoices' },
     transactions: { titleKey: 'nav.transactions' },
     custody: { titleKey: 'nav.myCustody' },
+    approvals: { titleKey: 'nav.approvals' },
     rejected: { titleKey: 'nav.rejected' },
     notifications: { titleKey: 'nav.notifications' },
   },

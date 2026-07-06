@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Invoice } from '../../types';
-import { invoiceService } from '../../services';
+import { useQuery } from '@tanstack/react-query';
 import { Modal } from './Modal';
 import { StatusChip } from './Chip';
 import { PageLoader } from './PageLoader';
 import { ImageLightbox } from './ImageLightbox';
 import { formatMoney, projectName, statusLabel, assetUrl, invoiceManagerName } from '../../utils/format';
+import { invoiceService } from '../../services';
+import { queryKeys } from '../../lib/queryKeys';
+import { CACHE } from '../../lib/cachePolicy';
 
 export function InvoiceDetailModal({
   invoiceId,
@@ -16,25 +18,16 @@ export function InvoiceDetailModal({
   onClose: () => void;
 }) {
   const { t, i18n } = useTranslation();
-  const [invoice, setInvoice] = useState<Invoice | null>(null);
-  const [loading, setLoading] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lang = i18n.language;
   const dateLocale = lang === 'ar' ? 'ar-SA' : 'en-SA';
 
-  useEffect(() => {
-    if (!invoiceId) {
-      setInvoice(null);
-      setLightboxIndex(null);
-      return;
-    }
-    setLoading(true);
-    invoiceService
-      .get(invoiceId)
-      .then(setInvoice)
-      .catch(() => setInvoice(null))
-      .finally(() => setLoading(false));
-  }, [invoiceId]);
+  const { data: invoice, isLoading, isError } = useQuery({
+    queryKey: queryKeys.invoices.detail(invoiceId ?? ''),
+    queryFn: () => invoiceService.get(invoiceId!),
+    enabled: Boolean(invoiceId),
+    ...CACHE.transactional,
+  });
 
   const images = invoice?.attachments?.length
     ? invoice.attachments
@@ -70,9 +63,9 @@ export function InvoiceDetailModal({
       subtitle={invoice?.invoiceNumber ? t('pa.vendorNumber', { number: invoice.invoiceNumber }) : undefined}
       width="xl"
     >
-      {loading ? (
+      {isLoading ? (
         <PageLoader compact />
-      ) : !invoice ? (
+      ) : isError || !invoice ? (
         <p className="text-muted text-sm text-center py-8">{t('common.noData')}</p>
       ) : (
         <div className="space-y-5">
@@ -157,6 +150,8 @@ export function InvoiceDetailModal({
                             <img
                               src={entry.src}
                               alt={entry.alt}
+                              loading="lazy"
+                              decoding="async"
                               className="w-full max-h-80 object-contain bg-white pointer-events-none"
                             />
                           )}

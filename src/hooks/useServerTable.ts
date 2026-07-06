@@ -28,7 +28,7 @@ export function useServerTable(options?: {
 }) {
   const pageSize = options?.pageSize ?? 15;
   const defaultSort = options?.defaultSort ?? '-createdAt';
-  const debounceMs = options?.debounceMs ?? 400;
+  const debounceMs = options?.debounceMs ?? 500;
 
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState('');
@@ -66,7 +66,8 @@ export function useServerTable(options?: {
       limit: pageSize,
       sort,
     };
-    if (debouncedQuery.trim()) params.search = debouncedQuery.trim();
+    const q = debouncedQuery.trim();
+    if (q.length >= 2) params.search = q;
     if (status) params.status = status;
     for (const [key, value] of Object.entries(filters)) {
       if (value) params[key] = value;

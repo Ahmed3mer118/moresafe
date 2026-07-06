@@ -36,32 +36,33 @@ import { summarizeProjects } from '../../utils/budgetHelpers';
 export function FinanceHomePage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.language;
-  const [stats, setStats] = useState<Awaited<ReturnType<typeof dashboardService.finance>> | null>(null);
-  const [budgetData, setBudgetData] = useState<Awaited<ReturnType<typeof projectService.budgets>> | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [s, b] = await Promise.all([
-        dashboardService.finance(),
-        projectService.budgets(),
-      ]);
-      setStats(s);
-      setBudgetData(b);
-    } finally {
-      setLoading(false);
-    }
+  const statsQuery = useQuery({
+    queryKey: queryKeys.dashboard.finance,
+    queryFn: () => dashboardService.finance(),
+    ...CACHE.dashboard,
+  });
+  const budgetQuery = useQuery({
+    queryKey: queryKeys.projects.budgets,
+    queryFn: () => projectService.budgets(),
+    ...CACHE.reference,
+  });
+
+  const stats = statsQuery.data;
+  const budgetData = budgetQuery.data;
+  const loading = statsQuery.isLoading || budgetQuery.isLoading;
+
+  const refreshAll = () => {
+    void statsQuery.refetch();
+    void budgetQuery.refetch();
   };
-
-  useEffect(() => { load(); }, []);
 
   const budgetTotals = budgetData?.totals ?? summarizeProjects(budgetData?.projects);
 
   return (
     <div className="space-y-5">
       <div className="flex justify-end">
-        <RefreshButton onRefresh={load} loading={loading} />
+        <RefreshButton onRefresh={refreshAll} loading={loading || statsQuery.isFetching || budgetQuery.isFetching} />
       </div>
       <StatsGrid>
         <StatCard icon="💼" label={t('finance.stats.openCustodies')} value={stats?.openCustodies ?? 0} color="blue" trend={t('finance.stats.inProgress')} />
@@ -91,7 +92,7 @@ export function FinanceReviewPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
 
-  const table = useServerTable({ pageSize: 10, extraFilters: { view: 'card' } });
+  const table = useServerTable({ pageSize: 10, extraFilters: { view: 'card', invoiceStatus: 'pending_finance' } });
   const {
     items: custodies,
     isLoading,
@@ -121,11 +122,6 @@ export function FinanceReviewPage() {
       return valid;
     });
   }, [custodies]);
-
-  const displayCustodies = useMemo(
-    () => custodies.filter((c) => (c.invoices ?? []).some((i) => i.status === 'pending_finance')),
-    [custodies],
-  );
 
   const toggleCustody = (_custodyId: string, invoiceIds: string[], checked: boolean) => {
     setSelectedInvoiceIds((prev) => {
@@ -195,13 +191,13 @@ export function FinanceReviewPage() {
         <Card><Notice variant="error">{t('common.loadFailed', { defaultValue: 'تعذّر تحميل البيانات' })}</Notice></Card>
       ) : isLoading ? (
         <Card><PageLoader compact /></Card>
-      ) : displayCustodies.length === 0 ? (
+      ) : custodies.length === 0 ? (
         <Card>
           <p className="text-center text-[#64748b] py-10 text-sm">{t('finance.noPendingInvoices')}</p>
         </Card>
       ) : (
         <>
-          {displayCustodies.map((c) => (
+          {custodies.map((c) => (
             <CustodyReviewCard
               key={c._id}
               custody={c}
@@ -240,7 +236,7 @@ export function FinanceEntriesPage() {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectCustodyId, setRejectCustodyId] = useState<string | null>(null);
 
-  const table = useServerTable({ pageSize: 10, extraFilters: { view: 'card' } });
+  const table = useServerTable({ pageSize: 10, extraFilters: { view: 'card', invoiceStatus: 'pending_finance' } });
   const {
     items: custodies,
     isLoading,
@@ -284,11 +280,6 @@ export function FinanceEntriesPage() {
       return next;
     });
   }, [custodies]);
-
-  const displayCustodies = useMemo(
-    () => custodies.filter((c) => (c.invoices ?? []).some((i) => i.status === 'pending_finance')),
-    [custodies],
-  );
 
   const toggleCustody = (custodyId: string, invoiceIds: string[], checked: boolean) => {
     setSelectedByCustody((prev) => {
@@ -375,11 +366,11 @@ export function FinanceEntriesPage() {
         <Card><Notice variant="error">{t('common.loadFailed', { defaultValue: 'تعذّر تحميل البيانات' })}</Notice></Card>
       ) : isLoading ? (
         <Card><PageLoader compact /></Card>
-      ) : displayCustodies.length === 0 ? (
+      ) : custodies.length === 0 ? (
         <Card><p className="text-muted text-sm text-center py-6">{t('finance.noEntries')}</p></Card>
       ) : (
         <>
-          {displayCustodies.map((c) => {
+          {custodies.map((c) => {
             const custodySelected = selectedByCustody[c._id] || new Set<string>();
             const pendingFinance = (c.invoices ?? []).filter((i) => i.status === 'pending_finance');
 

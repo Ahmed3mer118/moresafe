@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import {
   keepPreviousData,
   useQuery,
@@ -42,6 +42,10 @@ export function usePaginatedQuery<T>({
 
   const page = params.page ?? 1;
   const totalPages = query.data?.totalPages ?? 1;
+  const prefetchKey = useMemo(
+    () => `${page}|${totalPages}|${params.limit ?? 15}|${params.sort ?? ''}|${params.status ?? ''}`,
+    [page, totalPages, params.limit, params.sort, params.status],
+  );
 
   useEffect(() => {
     if (!prefetchNext || !query.data || page >= totalPages) return;
@@ -51,9 +55,9 @@ export function usePaginatedQuery<T>({
       queryFn: ({ signal }) => queryFn(nextParams, signal),
       staleTime,
     });
-    // Intentionally omit queryFn from deps — inline lambdas would retrigger prefetch every render
+    // Prefetch next page only — not on every search keystroke
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefetchNext, query.data, page, totalPages, params, queryKey, staleTime, queryClient]);
+  }, [prefetchNext, query.data, prefetchKey, queryKey, staleTime, queryClient]);
 
   return {
     ...query,

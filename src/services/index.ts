@@ -171,6 +171,18 @@ export class InvoiceService {
     });
   }
 
+  pmApproveInvoice(id: string, approved: boolean, reason?: string) {
+    return apiClient.post<Invoice>(`/invoices/${id}/pm-approve`, { approved, reason });
+  }
+
+  batchPmApprove(invoiceIds: string[], approved: boolean, reason?: string) {
+    return apiClient.post<{ count: number; invoices: Invoice[] }>('/invoices/batch-pm-approve', {
+      invoiceIds,
+      approved,
+      reason,
+    });
+  }
+
   batchReview(invoiceIds: string[], approved: boolean, reason?: string) {
     return apiClient.post<{ count: number; invoices: Invoice[] }>('/invoices/batch-review', {
       invoiceIds,
@@ -343,6 +355,7 @@ export class DashboardService {
       openCount: number;
       rejected: number;
       draftInvoices: number;
+      pendingPmApprovals: number;
       remaining: number;
       amount: number;
       openCustody?: Custody | null;

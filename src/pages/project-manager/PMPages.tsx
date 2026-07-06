@@ -9,12 +9,11 @@ import { Button } from '../../components/ui/Button';
 import { DataTable } from '../../components/ui/DataTable';
 import { Notice } from '../../components/ui/Notice';
 import { StatusChip, Amount } from '../../components/ui/Chip';
-import { FormField, inputClass, selectClass } from '../../components/ui/FormField';
+import { FormField, selectClass } from '../../components/ui/FormField';
 import { ProgressBar } from '../../components/ui/ProgressBar';
 import { ProjectBarChart } from '../../components/charts/LazyCharts';
 import { dashboardService, custodyService, projectService, userService, invoiceService } from '../../services';
 import type { Custody, Project, User, Invoice } from '../../types';
-import { useFormDraft } from '../../hooks/useFormDraft';
 import { useServerDataTable } from '../../hooks/useServerDataTable';
 import { usePaginatedQuery } from '../../hooks/usePaginatedQuery';
 import { useServerTable } from '../../hooks/useServerTable';
@@ -166,7 +165,7 @@ export function PMHomePage() {
     try {
       const [d, pRes] = await Promise.all([
         dashboardService.projectManager(),
-        custodyService.list({ status: 'closed', view: 'card', limit: 100 }),
+        custodyService.list({ queueOnly: 'true', view: 'card', limit: 100 }),
       ]);
       setData(d);
       setPending(pRes.items ?? []);
@@ -202,7 +201,7 @@ export function PMHomePage() {
       </Card>
 
       {pending.length > 0 && (
-        <Card title="عهد مغلقة بانتظار مراجعتي" action={<Button size="sm" variant="ghost" onClick={() => window.location.href = '/dashboard/project-accountant/approvals'}>عرض الكل ←</Button>}>
+        <Card title={t('pm.pendingApproval')} action={<Button size="sm" variant="ghost" onClick={() => window.location.href = '/dashboard/project-manager/approvals'}>{t('common.view')} ←</Button>}>
           <div className="space-y-2">
             {pending.slice(0, 3).map((c) => (
               <div key={c._id} className="flex justify-between items-center p-3 bg-[#f7f9fc] rounded-xl text-sm">
@@ -296,7 +295,7 @@ export function PMApprovalsPage() {
       return;
     }
     runAction(async () => {
-      await invoiceService.batchPmReview(ids, true);
+      await invoiceService.batchPmApprove(ids, true);
       setSelectedIds(new Set());
       invalidate.invoices();
       invalidate.custodies();
@@ -306,7 +305,7 @@ export function PMApprovalsPage() {
   const confirmReject = (reason: string) => {
     const ids = [...selectedIds];
     runAction(async () => {
-      await invoiceService.batchPmReview(ids, false, reason);
+      await invoiceService.batchPmApprove(ids, false, reason);
       setSelectedIds(new Set());
       setRejectOpen(false);
       invalidate.invoices();
@@ -563,14 +562,14 @@ export function PMCustodyApprovalsPage() {
     setLoading(true);
     return custodyService.list(params).then((res) => {
       const list = (res.items ?? []).filter((c) =>
-        (c.invoices ?? []).some((i) => i.status === 'pending_pm'),
+        (c.invoices ?? []).some((i) => i.status === 'accumulated'),
       );
       setCustodies(list);
       setSelectedInvoiceIds((prev) => {
         const valid = new Set<string>();
         list.forEach((c) =>
           (c.invoices ?? []).forEach((i) => {
-            if (i.status === 'pending_pm' && prev.has(i._id)) valid.add(i._id);
+            if (i.status === 'accumulated' && prev.has(i._id)) valid.add(i._id);
           }),
         );
         return valid;
@@ -692,8 +691,8 @@ export function PMCustodyApprovalsPage() {
             selectedInvoiceIds={selectedInvoiceIds}
             onToggleCustody={toggleCustody}
             onToggleInvoice={toggleInvoice}
-            reviewStatus="pending_pm"
-            invoiceFilter={(i) => i.status === 'pending_pm'}
+            reviewStatus="accumulated"
+            invoiceFilter={(i) => i.status === 'accumulated'}
           />
         ))
       )}
@@ -1009,7 +1008,7 @@ export function PMProjectsPage() {
       return;
     }
     runAction(async () => {
-      await invoiceService.batchPmReview(ids, true);
+      await invoiceService.batchPmApprove(ids, true);
       setSelectedInvoiceIds(new Set());
       invalidate.invoices();
       invalidate.custodies();
@@ -1019,7 +1018,7 @@ export function PMProjectsPage() {
   const confirmReject = (reason: string) => {
     const ids = [...selectedInvoiceIds];
     runAction(async () => {
-      await invoiceService.batchPmReview(ids, false, reason);
+      await invoiceService.batchPmApprove(ids, false, reason);
       setSelectedInvoiceIds(new Set());
       setRejectOpen(false);
       invalidate.invoices();
@@ -1322,73 +1321,73 @@ export function PMEngineersPage() {
   );
 }
 
-const EMPTY_EMERGENCY_FORM = { projectId: '', holderId: '', amount: 0, priority: 'high', reason: '', date: '' };
+// const EMPTY_EMERGENCY_FORM = { projectId: '', holderId: '', amount: 0, priority: 'high', reason: '', date: '' };
 
-export function PMEmergencyPage() {
-  const { t, i18n } = useTranslation();
-  const { runAction } = useUi();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [accountants, setAccountants] = useState<User[]>([]);
-  const [loading, setLoading] = useState(true);
-  const { form, setForm, clearDraft } = useFormDraft('pm.emergency', EMPTY_EMERGENCY_FORM);
+// export function PMEmergencyPage() {
+//   const { t, i18n } = useTranslation();
+//   const { runAction } = useUi();
+//   const [projects, setProjects] = useState<Project[]>([]);
+//   const [accountants, setAccountants] = useState<User[]>([]);
+//   const [loading, setLoading] = useState(true);
+//   const { form, setForm, clearDraft } = useFormDraft('pm.emergency', EMPTY_EMERGENCY_FORM);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [p, a] = await Promise.all([
-        projectService.list({ limit: 200 }),
-        userService.list({ role: 'project_manager', limit: 100 }),
-      ]);
-      setProjects(p.items ?? []);
-      setAccountants(a.items ?? []);
-    } finally {
-      setLoading(false);
-    }
-  };
+//   const load = async () => {
+//     setLoading(true);
+//     try {
+//       const [p, a] = await Promise.all([
+//         projectService.list({ limit: 200 }),
+//         userService.list({ role: 'project_manager', limit: 100 }),
+//       ]);
+//       setProjects(p.items ?? []);
+//       setAccountants(a.items ?? []);
+//     } finally {
+//       setLoading(false);
+//     }
+//   };
 
-  useEffect(() => { load(); }, []);
+//   useEffect(() => { load(); }, []);
 
-  const submit = () =>
-    runAction(async () => {
-      await custodyService.create({
-        projectId: form.projectId,
-        amount: form.amount,
-        type: 'emergency',
-        purpose: form.reason,
-        holderId: form.holderId || undefined,
-      });
-      clearDraft();
-    }, { success: 'تم إرسال الطلب الطارئ' });
+//   const submit = () =>
+//     runAction(async () => {
+//       await custodyService.create({
+//         projectId: form.projectId,
+//         amount: form.amount,
+//         type: 'emergency',
+//         purpose: form.reason,
+//         holderId: form.holderId || undefined,
+//       });
+//       clearDraft();
+//     }, { success: 'تم إرسال الطلب الطارئ' });
 
-  return (
-    <Card title={t('nav.emergency')} action={<RefreshButton onRefresh={load} loading={loading} />}>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-        <FormField label={t('common.project')}>
-          <select className={selectClass} value={form.projectId} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
-            <option value="">—</option>
-            {projects.map((p) => <option key={p._id} value={p._id}>{projectName(p, i18n.language)}</option>)}
-          </select>
-        </FormField>
-        <FormField label="مدير المشروع">
-          <select className={selectClass} value={form.holderId} onChange={(e) => setForm({ ...form, holderId: e.target.value })}>
-            <option value="">—</option>
-            {accountants.map((u) => <option key={u.id || u._id} value={u.id || u._id}>{userName(u, i18n.language)}</option>)}
-          </select>
-        </FormField>
-        <FormField label={t('common.amount')}><input className={inputClass} type="number" value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: +e.target.value })} /></FormField>
-        <FormField label="الأولوية">
-          <select className={selectClass} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
-            <option value="high">عالية</option>
-            <option value="medium">متوسطة</option>
-          </select>
-        </FormField>
-        <FormField label="تاريخ الحاجة"><input className={inputClass} type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></FormField>
-        <FormField label="سبب الطوارئ" full><textarea className={inputClass} rows={3} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></FormField>
-      </div>
-      <Button className="mt-4" onClick={submit}>{t('common.submit')}</Button>
-    </Card>
-  );
-}
+//   return (
+//     <Card title={t('nav.emergency')} action={<RefreshButton onRefresh={load} loading={loading} />}>
+//       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+//         <FormField label={t('common.project')}>
+//           <select className={selectClass} value={form.projectId} onChange={(e) => setForm({ ...form, projectId: e.target.value })}>
+//             <option value="">—</option>
+//             {projects.map((p) => <option key={p._id} value={p._id}>{projectName(p, i18n.language)}</option>)}
+//           </select>
+//         </FormField>
+//         <FormField label="مدير المشروع">
+//           <select className={selectClass} value={form.holderId} onChange={(e) => setForm({ ...form, holderId: e.target.value })}>
+//             <option value="">—</option>
+//             {accountants.map((u) => <option key={u.id || u._id} value={u.id || u._id}>{userName(u, i18n.language)}</option>)}
+//           </select>
+//         </FormField>
+//         <FormField label={t('common.amount')}><input className={inputClass} type="number" value={form.amount || ''} onChange={(e) => setForm({ ...form, amount: +e.target.value })} /></FormField>
+//         <FormField label="الأولوية">
+//           <select className={selectClass} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+//             <option value="high">عالية</option>
+//             <option value="medium">متوسطة</option>
+//           </select>
+//         </FormField>
+//         <FormField label="تاريخ الحاجة"><input className={inputClass} type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></FormField>
+//         <FormField label="سبب الطوارئ" full><textarea className={inputClass} rows={3} value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></FormField>
+//       </div>
+//       <Button className="mt-4" onClick={submit}>{t('common.submit')}</Button>
+//     </Card>
+//   );
+// }
 
 export function PMReportsPage() {
   const { t } = useTranslation();

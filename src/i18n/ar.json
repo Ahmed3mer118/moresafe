@@ -101,8 +101,10 @@
       "remaining": "الرصيد المتبقي",
       "activeInvoices": "فواتير جارية",
       "rejected": "مرفوضة",
-      "sarAvailable": "ريال متاح"
+      "sarAvailable": "ريال متاح",
+      "pendingPmApprovals": "بانتظار اعتمادك"
     },
+    "pendingPmApprovalsNotice": "{{count}} فاتورة بانتظار مراجعة مدير المشاريع — اعتمدها من صفحة الاعتمادات",
     "recentInvoices": "أحدث الفواتير",
     "approvalLog": "سجل الاعتمادات",
     "approvalLogNotice": "كل اعتماد أو رفض يُسجّل باسم المحاسب والعهدة أو الفاتورة.",
@@ -431,12 +433,12 @@
   },
   "status": {
     "open": "مفتوحة",
-    "closed": "بانتظار مراجعة المحاسب",
+    "closed": "بانتظار مراجعة محاسب العهدة",
     "pm_approved": "بانتظار المالية",
     "pm_rejected": "مرفوضة من المدير",
     "settled": "تمت التسوية",
     "finance_rejected": "مرفوضة من المالية",
-    "accumulated": "بانتظار مراجعة المحاسب",
+    "accumulated": "بانتظار مراجعة محاسب العهدة",
     "pending_pm": "بانتظار مراجعة مدير المشاريع",
     "pending_finance": "بانتظار المالية",
     "active": "نشط",
@@ -444,9 +446,9 @@
     "over_budget": "تخطي الميزانية",
     "new": "جديد",
     "unknown": "غير محدد",
-    "finance_pending": "بانتظار المالية",
+    "finance_pending": "بانتظار الصرف",
     "draft": "مسودة",
-    "finance_approved": "معتمدة من المالية"
+    "finance_approved": "بانتظار الصرف"
   },
   "budget": {
     "totalBudget": "إجمالي الميزانيات",

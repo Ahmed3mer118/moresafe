@@ -8,13 +8,13 @@ export const CACHE = {
   },
   /** Transactional lists: custodies, invoices, transactions */
   transactional: {
-    staleTime: 30 * 1000,
-    gcTime: 5 * 60 * 1000,
+    staleTime: 90 * 1000,
+    gcTime: 15 * 60 * 1000,
   },
   /** Dashboard aggregates and stats */
   dashboard: {
-    staleTime: 60 * 1000,
-    gcTime: 10 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
   },
   /** Activity logs, approval logs */
   logs: {
